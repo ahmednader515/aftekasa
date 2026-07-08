@@ -1,7 +1,6 @@
-import { getServerSession } from "next-auth";
+import { getSession } from "@/lib/auth-server";
 import { redirect, notFound } from "next/navigation";
 import Link from "next/link";
-import { authOptions } from "@/lib/auth";
 import { getCourseForEdit } from "@/lib/db";
 import { canManageCourse } from "@/lib/permissions";
 import { EditCourseForm, type ContentOrderEntry } from "./EditCourseForm";
@@ -36,7 +35,7 @@ function initialContentOrderFromRows(
 }
 
 export default async function EditCoursePage({ params }: Props) {
-  const session = await getServerSession(authOptions);
+  const session = await getSession();
   if (!session) redirect("/login");
   const role = session.user.role;
   if (role !== "ADMIN" && role !== "TEACHER") {

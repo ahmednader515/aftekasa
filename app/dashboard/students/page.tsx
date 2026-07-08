@@ -1,6 +1,5 @@
-import { getServerSession } from "next-auth";
+import { getSession } from "@/lib/auth-server";
 import { redirect } from "next/navigation";
-import { authOptions } from "@/lib/auth";
 import {
   getUsersByRole,
   getEnrollmentsWithCourseByUserId,
@@ -12,7 +11,7 @@ import { StudentsList } from "./StudentsList";
 import { StaffAccountsSection } from "./StaffAccountsSection";
 
 export default async function StudentsPage() {
-  const session = await getServerSession(authOptions);
+  const session = await getSession();
   if (!session) redirect("/login");
   if (session.user.role !== "ADMIN" && session.user.role !== "ASSISTANT_ADMIN") {
     redirect("/dashboard");

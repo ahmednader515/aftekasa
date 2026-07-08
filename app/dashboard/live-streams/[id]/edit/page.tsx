@@ -1,7 +1,6 @@
-import { getServerSession } from "next-auth";
+import { getSession } from "@/lib/auth-server";
 import { redirect, notFound } from "next/navigation";
 import Link from "next/link";
-import { authOptions } from "@/lib/auth";
 import { getLiveStreamById, getCoursesAll, getCoursesWithCountsForCreator, getCourseById } from "@/lib/db";
 import { canManageCourse } from "@/lib/permissions";
 import { LiveStreamForm } from "../../LiveStreamForm";
@@ -15,7 +14,7 @@ function toIsoString(value: unknown): string {
 }
 
 export default async function EditLiveStreamPage({ params }: Props) {
-  const session = await getServerSession(authOptions);
+  const session = await getSession();
   if (!session) redirect("/login");
   const role = session.user.role;
   if (role !== "ADMIN" && role !== "ASSISTANT_ADMIN" && role !== "TEACHER") {

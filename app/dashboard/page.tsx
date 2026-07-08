@@ -1,13 +1,11 @@
-import { getServerSession } from "next-auth";
 import { redirect } from "next/navigation";
 import Link from "next/link";
-import { authOptions } from "@/lib/auth";
+import { getSession } from "@/lib/auth-server";
 import {
   getUserById,
   getAccessibleCoursesForUser,
   countUsersByRole,
   countCourses,
-  getAllQuizAttemptsForAdmin,
   getTotalPlatformEarnings,
   getCoursesWithCountsForCreator,
   getSubscriptionsFeatureEnabled,
@@ -22,7 +20,7 @@ import { ActivateCodeSection } from "./ActivateCodeSection";
 import { StudentSubscriptionsPanel } from "./StudentSubscriptionsPanel";
 
 export default async function DashboardPage() {
-  const session = await getServerSession(authOptions);
+  const session = await getSession();
   if (!session) redirect("/login");
   const t = await getServerTranslator();
 
@@ -294,14 +292,11 @@ export default async function DashboardPage() {
     );
   }
 
-  const [studentsCount, coursesCount, _quizAttempts, totalEarnings] = await Promise.all([
+  const [studentsCount, coursesCount, totalEarnings] = await Promise.all([
     countUsersByRole("STUDENT"),
     countCourses(),
-    getAllQuizAttemptsForAdmin().catch(() => []),
     getTotalPlatformEarnings(),
   ]);
-
-  void _quizAttempts;
 
   return (
     <div className="space-y-8">

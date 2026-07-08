@@ -3,12 +3,15 @@
 import { SessionProvider as NextAuthSessionProvider } from "next-auth/react";
 import { ReactNode } from "react";
 
-/** refetchInterval: إعادة التحقق من الجلسة كل ٥ ثوانٍ حتى يُسجّل خروج الجهاز الآخر فوراً دون حاجة لريفرش */
-const SESSION_REFETCH_INTERVAL = 5;
+/** Poll session periodically to detect login from another device (without hammering the DB). */
+const SESSION_REFETCH_INTERVAL = 45;
 
 export function SessionProvider({ children }: { children: ReactNode }) {
   return (
-    <NextAuthSessionProvider refetchInterval={SESSION_REFETCH_INTERVAL}>
+    <NextAuthSessionProvider
+      refetchInterval={SESSION_REFETCH_INTERVAL}
+      refetchOnWindowFocus
+    >
       {children}
     </NextAuthSessionProvider>
   );

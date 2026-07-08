@@ -1,11 +1,10 @@
-import { getServerSession } from "next-auth";
+import { getSession } from "@/lib/auth-server";
 import { redirect } from "next/navigation";
-import { authOptions } from "@/lib/auth";
 import { getSubscriptionsFeatureEnabled, listSubscriptionPlansAll } from "@/lib/db";
 import { SubscriptionsAdminClient, type AdminPlanRow } from "./SubscriptionsAdminClient";
 
 export default async function SubscriptionsDashboardPage() {
-  const session = await getServerSession(authOptions);
+  const session = await getSession();
   if (!session || session.user.role !== "ADMIN") {
     redirect("/dashboard");
   }

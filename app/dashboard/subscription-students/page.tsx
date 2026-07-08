@@ -1,13 +1,12 @@
+import { getSession } from "@/lib/auth-server";
 import Link from "next/link";
-import { getServerSession } from "next-auth";
 import { redirect } from "next/navigation";
-import { authOptions } from "@/lib/auth";
 import { listUserPlatformSubscriptionsForAdmin } from "@/lib/db";
 import { getServerTranslator } from "@/lib/i18n/server";
 import { SubscriptionStudentsClient, type SubscriptionStudentRow } from "./SubscriptionStudentsClient";
 
 export default async function SubscriptionStudentsPage() {
-  const session = await getServerSession(authOptions);
+  const session = await getSession();
   if (!session || session.user.role !== "ADMIN") {
     redirect("/dashboard");
   }

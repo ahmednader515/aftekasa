@@ -1,11 +1,10 @@
-import { getServerSession } from "next-auth";
+import { getSession } from "@/lib/auth-server";
 import { redirect } from "next/navigation";
-import { authOptions } from "@/lib/auth";
 import { getServerTranslator } from "@/lib/i18n/server";
 import { MessagesView } from "./MessagesView";
 
 export default async function MessagesPage() {
-  const session = await getServerSession(authOptions);
+  const session = await getSession();
   if (!session) redirect("/login");
 
   const isStaff =

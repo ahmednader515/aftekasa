@@ -1,7 +1,6 @@
-import { getServerSession } from "next-auth";
+import { getSession } from "@/lib/auth-server";
 import { redirect } from "next/navigation";
 import Link from "next/link";
-import { authOptions } from "@/lib/auth";
 import { ensureTeacherHomepageOrderColumn, getTeachersFeatureEnabled, getUsersByRole } from "@/lib/db";
 import { getServerTranslator } from "@/lib/i18n/server";
 import { TeachersAdminClient } from "./TeachersAdminClient";
@@ -13,7 +12,7 @@ function normalizeTeacherHomepageOrder(v: unknown): number | null {
 }
 
 export default async function TeachersAdminPage() {
-  const session = await getServerSession(authOptions);
+  const session = await getSession();
   if (!session || session.user.role !== "ADMIN") {
     redirect("/dashboard");
   }

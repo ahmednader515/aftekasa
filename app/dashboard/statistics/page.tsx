@@ -1,6 +1,5 @@
-import { getServerSession } from "next-auth";
+import { getSession } from "@/lib/auth-server";
 import { redirect } from "next/navigation";
-import { authOptions } from "@/lib/auth";
 import {
   getUsersByRole,
   getEnrollmentsWithCourseByUserId,
@@ -15,7 +14,7 @@ import { getServerTranslator } from "@/lib/i18n/server";
 import StatisticsContent from "./StatisticsContent";
 
 export default async function StatisticsPage() {
-  const session = await getServerSession(authOptions);
+  const session = await getSession();
   if (!session) redirect("/login");
   const role = session.user.role;
   if (role !== "ADMIN" && role !== "ASSISTANT_ADMIN" && role !== "TEACHER") {

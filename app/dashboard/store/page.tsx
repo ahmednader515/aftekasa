@@ -1,6 +1,5 @@
-import { getServerSession } from "next-auth";
+import { getSession } from "@/lib/auth-server";
 import { redirect } from "next/navigation";
-import { authOptions } from "@/lib/auth";
 import {
   getStoreFeatureEnabled,
   getHomepageSettings,
@@ -12,7 +11,7 @@ import { getServerTranslator } from "@/lib/i18n/server";
 import { StoreAdminClient } from "./StoreAdminClient";
 
 export default async function StoreDashboardPage() {
-  const session = await getServerSession(authOptions);
+  const session = await getSession();
   if (!session || session.user.role !== "ADMIN") redirect("/dashboard");
 
   const t = await getServerTranslator();

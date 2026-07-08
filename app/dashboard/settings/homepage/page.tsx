@@ -1,21 +1,22 @@
-import { getServerSession } from "next-auth";
+import { getSession } from "@/lib/auth-server";
 import { redirect } from "next/navigation";
-import { authOptions } from "@/lib/auth";
 import { HomepageSettingsForm } from "./HomepageSettingsForm";
 import { getCoursesPublished, getHomepageSettings } from "@/lib/db";
 import { getServerTranslator } from "@/lib/i18n/server";
 
 export default async function DashboardHomepageSettingsPage() {
-  const session = await getServerSession(authOptions);
+  const session = await getSession();
   if (!session) redirect("/login");
   if (session.user.role !== "ADMIN" && session.user.role !== "ASSISTANT_ADMIN") redirect("/dashboard");
   const t = await getServerTranslator();
 
-  const settings = await getHomepageSettings();
+  const [settings, coursesResult] = await Promise.all([
+    getHomepageSettings(),
+    getCoursesPublished(true).catch(() => [] as Awaited<ReturnType<typeof getCoursesPublished>>),
+  ]);
   let publishedCourses: { id: string; slug: string; title: string; titleAr: string | null }[] = [];
   try {
-    const courses = await getCoursesPublished(true);
-    publishedCourses = courses.map((c) => {
+    publishedCourses = coursesResult.map((c) => {
       const titleArRaw = (c as { titleAr?: string | null }).titleAr ?? c.title_ar ?? null;
       const titleAr =
         titleArRaw != null && String(titleArRaw).trim() !== "" ? String(titleArRaw).trim() : null;

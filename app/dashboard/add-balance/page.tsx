@@ -1,7 +1,6 @@
-import { getServerSession } from "next-auth";
+import { getSession } from "@/lib/auth-server";
 import { redirect } from "next/navigation";
 import Link from "next/link";
-import { authOptions } from "@/lib/auth";
 import { getHomepageSettings } from "@/lib/db";
 import { CopyButton } from "./CopyButton";
 import { getLocaleFromCookie, getServerTranslator } from "@/lib/i18n/server";
@@ -54,7 +53,7 @@ function resolveAddBalanceCopy(
 }
 
 export default async function AddBalancePage() {
-  const session = await getServerSession(authOptions);
+  const session = await getSession();
   if (!session) redirect("/login");
   if (session.user.role !== "STUDENT") redirect("/dashboard");
   const [settings, locale, t] = await Promise.all([

@@ -156,22 +156,45 @@ export async function getUserById(id: string): Promise<User | null> {
   return (rows[0] as User) ?? null;
 }
 
+const sessionIdCache = new Map<string, { value: string | null; at: number }>();
+const SESSION_ID_CACHE_MS = 20_000;
+
+function readSessionIdCache(userId: string): string | null | undefined {
+  const cached = sessionIdCache.get(userId);
+  if (!cached) return undefined;
+  if (Date.now() - cached.at > SESSION_ID_CACHE_MS) {
+    sessionIdCache.delete(userId);
+    return undefined;
+  }
+  return cached.value;
+}
+
+function writeSessionIdCache(userId: string, value: string | null): void {
+  sessionIdCache.set(userId, { value, at: Date.now() });
+}
+
 /** جلسة واحدة نشطة لكل مستخدم — نستخدمها لمنع تسجيل الدخول من أكثر من جهاز */
 export async function getCurrentSessionId(userId: string): Promise<string | null> {
+  const cached = readSessionIdCache(userId);
+  if (cached !== undefined) return cached;
   try {
     const rows = await sql`SELECT current_session_id FROM "User" WHERE id = ${userId} LIMIT 1`;
     const val = (rows[0] as { current_session_id?: string | null })?.current_session_id;
-    return val ?? null;
+    const value = val ?? null;
+    writeSessionIdCache(userId, value);
+    return value;
   } catch {
     return null;
   }
 }
 
 export async function setCurrentSessionId(userId: string, sessionId: string): Promise<void> {
+  writeSessionIdCache(userId, sessionId);
   await sql`UPDATE "User" SET current_session_id = ${sessionId} WHERE id = ${userId}`;
 }
 
 export async function clearCurrentSessionId(userId: string): Promise<void> {
+  writeSessionIdCache(userId, null);
   await sql`UPDATE "User" SET current_session_id = NULL WHERE id = ${userId}`;
 }
 
@@ -1385,21 +1408,6 @@ export async function getTeacherIdsExcludedFromPublicCourseLists(): Promise<Set<
 
 async function getHomepageSettingsUncached(): Promise<HomepageSetting> {
   try {
-    await ensureHomepageHeroTemplateColumns();
-    await ensureHomepageHeroSliderCourseIdColumns();
-    await ensureHomepageReviewsSectionCopyColumns();
-    await ensureHomepageHeroCustomBgColumns();
-    await ensureAddBalanceSettingsColumns();
-    await ensureHomepageStoreEnabledColumn();
-    await ensureHomepageStoreSectionCopyColumns();
-    await ensureHomepagePrimaryColorColumn();
-    await ensureHomepageHeaderLogoColumn();
-    await ensureHomepageTeamSupportLinksColumns();
-    await ensureHomepageCtaCopyColumns();
-    await ensureHomepageBilingualTextColumns();
-    await ensureHomepagePlatformDetailsColumns();
-    await ensureHomepagePlatformNewsColumns();
-    await ensureHomepageCopyrightOverlayColumns();
     const rows = await sql`SELECT * FROM "HomepageSetting" WHERE id = 'default' LIMIT 1`;
     const row = rows[0] as Record<string, unknown> | undefined;
     if (!row) return HOMEPAGE_DEFAULTS;
@@ -4619,30 +4627,17 @@ export async function getQuizAttemptsForTeacher(teacherId: string): Promise<
 
 /** إجمالي أرباح المنصة (كورسات + اشتراكات + متجر) */
 export async function getTotalPlatformEarnings(): Promise<number> {
-  let coursesTotal = 0;
-  let subscriptionsTotal = 0;
-  let storeTotal = 0;
-
-  try {
-    const rows = await sql`SELECT COALESCE(SUM(amount), 0)::float as total FROM "Payment"`;
-    coursesTotal = Number((rows[0] as { total: number })?.total ?? 0);
-  } catch {
-    coursesTotal = 0;
-  }
-
-  try {
-    const rows = await sql`SELECT COALESCE(SUM(price_paid), 0)::float as total FROM "UserPlatformSubscription"`;
-    subscriptionsTotal = Number((rows[0] as { total: number })?.total ?? 0);
-  } catch {
-    subscriptionsTotal = 0;
-  }
-
-  try {
-    const rows = await sql`SELECT COALESCE(SUM(price_paid), 0)::float as total FROM "UserStorePurchase"`;
-    storeTotal = Number((rows[0] as { total: number })?.total ?? 0);
-  } catch {
-    storeTotal = 0;
-  }
+  const [coursesTotal, subscriptionsTotal, storeTotal] = await Promise.all([
+    sql`SELECT COALESCE(SUM(amount), 0)::float as total FROM "Payment"`
+      .then((rows) => Number((rows[0] as { total: number })?.total ?? 0))
+      .catch(() => 0),
+    sql`SELECT COALESCE(SUM(price_paid), 0)::float as total FROM "UserPlatformSubscription"`
+      .then((rows) => Number((rows[0] as { total: number })?.total ?? 0))
+      .catch(() => 0),
+    sql`SELECT COALESCE(SUM(price_paid), 0)::float as total FROM "UserStorePurchase"`
+      .then((rows) => Number((rows[0] as { total: number })?.total ?? 0))
+      .catch(() => 0),
+  ]);
 
   return coursesTotal + subscriptionsTotal + storeTotal;
 }

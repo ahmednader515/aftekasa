@@ -1,12 +1,11 @@
-import { getServerSession } from "next-auth";
+import { getSession } from "@/lib/auth-server";
 import { redirect } from "next/navigation";
-import { authOptions } from "@/lib/auth";
 import { getHomepageSettings } from "@/lib/db";
 import { AddBalanceSettingsForm } from "./AddBalanceSettingsForm";
 import { getServerTranslator } from "@/lib/i18n/server";
 
 export default async function DashboardAddBalanceSettingsPage() {
-  const session = await getServerSession(authOptions);
+  const session = await getSession();
   if (!session) redirect("/login");
   if (session.user.role !== "ADMIN" && session.user.role !== "ASSISTANT_ADMIN") redirect("/dashboard");
   const t = await getServerTranslator();
