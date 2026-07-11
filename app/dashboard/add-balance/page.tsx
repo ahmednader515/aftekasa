@@ -6,9 +6,19 @@ import { getHomepageSettings } from "@/lib/db";
 import { CopyButton } from "./CopyButton";
 import { getServerTranslator } from "@/lib/i18n/server";
 
+/** Normalize to WhatsApp international digits (Egypt +20 by default). */
 function toWhatsAppDigits(input: string | null | undefined): string {
   if (!input) return "";
-  const digits = String(input).replace(/\D+/g, "");
+  let digits = String(input).replace(/\D+/g, "");
+  if (!digits) return "";
+  // Already includes Egypt country code
+  if (digits.startsWith("20") && digits.length >= 11) return digits;
+  // Local Egyptian format: 01xxxxxxxxx → 201xxxxxxxxx
+  if (digits.startsWith("0")) return `20${digits.slice(1)}`;
+  // 10-digit mobile without leading 0: 1xxxxxxxxx → 201xxxxxxxxx
+  if (digits.length === 10 && digits.startsWith("1")) return `20${digits}`;
+  // Default: prepend Egypt country code when missing
+  if (!digits.startsWith("20")) return `20${digits}`;
   return digits;
 }
 
@@ -50,7 +60,7 @@ export default async function AddBalancePage() {
   const [settings, t] = await Promise.all([getHomepageSettings(), getServerTranslator()]);
 
   const walletNumber = settings.addBalanceWalletNumber?.trim() || "01023005622";
-  const whatsappNumber = toWhatsAppDigits(settings.addBalanceWhatsappNumber) || "966553612356";
+  const whatsappNumber = toWhatsAppDigits(settings.addBalanceWhatsappNumber) || "201554822405";
   const pageTitle = resolveAddBalanceCopy(settings.addBalanceTitle, t, "title");
   const pageSubtitle = resolveAddBalanceCopy(settings.addBalanceSubtitle, t, "subtitle");
   const methodTitle = resolveAddBalanceCopy(settings.addBalanceMethodTitle, t, "methodTitle");
@@ -94,7 +104,7 @@ export default async function AddBalancePage() {
                 rel="noopener noreferrer"
                 className="font-semibold underline"
               >
-                {whatsappNumber}
+                +{whatsappNumber}
               </a>
             </p>
           </div>
