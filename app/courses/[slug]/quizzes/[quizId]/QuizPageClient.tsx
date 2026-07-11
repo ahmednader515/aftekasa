@@ -16,6 +16,7 @@ export type QuizApiPayload = {
     id: string;
     type: string;
     questionText: string;
+    imageUrl?: string | null;
     order: number;
     options: Array<{ id: string; text: string; isCorrect: boolean }>;
   }>;
@@ -25,9 +26,18 @@ export type QuizApiPayload = {
   attemptsUsed?: number;
   /** من API: الحد الأقصى للمحاولات داخل الكورس */
   maxQuizAttempts?: number | null;
+  /** Previously passed (any attempt) — unlimited retries still allow restart */
+  hasPassed?: boolean;
+  hasSubmitted?: boolean;
+  latestAttemptId?: string | null;
+  inProgressAttemptId?: string | null;
+  resultScore?: number | null;
+  resultTotal?: number | null;
+  resultPercentage?: number | null;
+  nextContent?: { href: string; label: string; type: "lesson" | "quiz" } | null;
 };
 
-export function QuizPageClient({ quizId }: { quizId: string }) {
+export function QuizPageClient({ quizId, courseId }: { quizId: string; courseId?: string }) {
   const t = useT();
   const [quiz, setQuiz] = useState<QuizApiPayload | null>(null);
   const [loading, setLoading] = useState(true);
@@ -36,7 +46,8 @@ export function QuizPageClient({ quizId }: { quizId: string }) {
 
   useEffect(() => {
     if (invalidQuizId) return;
-    fetch(`/api/quizzes/${encodeURIComponent(quizId)}`)
+    const qs = courseId ? `?courseId=${encodeURIComponent(courseId)}` : "";
+    fetch(`/api/quizzes/${encodeURIComponent(quizId)}${qs}`)
       .then(async (res) => {
         const data = await res.json().catch(() => ({}));
         if (!res.ok) {
@@ -56,7 +67,7 @@ export function QuizPageClient({ quizId }: { quizId: string }) {
         setQuiz(null);
       })
       .finally(() => setLoading(false));
-  }, [invalidQuizId, quizId, t]);
+  }, [invalidQuizId, quizId, courseId, t]);
 
   if (invalidQuizId) {
     return (
@@ -98,7 +109,7 @@ export function QuizPageClient({ quizId }: { quizId: string }) {
     : `/courses/${quiz.course.id}`;
 
   const q = quiz as QuizApiPayload & { canAttempt?: boolean; attemptsUsed?: number; maxQuizAttempts?: number | null };
-  if (q.canAttempt === false) {
+  if (q.canAttempt === false && !q.hasSubmitted) {
     return (
       <div className="mx-auto max-w-3xl px-4 py-8 sm:px-6">
         <Link href={courseHref} className="text-sm font-medium text-[var(--color-primary)] hover:underline">
@@ -130,7 +141,7 @@ export function QuizPageClient({ quizId }: { quizId: string }) {
           <span className="mr-2"> — {t("quiz.durationLabel", "Quiz duration:")} {quiz.timeLimitMinutes} {t("quiz.minutes", "minutes")}</span>
         )}
       </p>
-      <QuizTake quiz={quiz} />
+      <QuizTake quiz={quiz} viewingCourseId={courseId} />
     </div>
   );
 }

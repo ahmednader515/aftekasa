@@ -1,9 +1,12 @@
 -- تقييمات الدروس (كل طالب يقيم كل حصة مرة واحدة ويتم التحديث عند إعادة التقييم)
 -- تشغيله مرة واحدة من لوحة قاعدة البيانات (SQL Editor)
+--
+-- ملاحظة: في قاعدة Infinity Math الحالية الحصص مخزّنة في جدول "Chapter"
+-- (وليس "Lesson"). عمود lesson_id يشير إلى معرّف الفصل/الحصة في "Chapter".
 
 CREATE TABLE IF NOT EXISTS "LessonRating" (
   id TEXT PRIMARY KEY,
-  lesson_id TEXT NOT NULL REFERENCES "Lesson"(id) ON DELETE CASCADE,
+  lesson_id TEXT NOT NULL REFERENCES "Chapter"(id) ON DELETE CASCADE,
   user_id TEXT NOT NULL REFERENCES "User"(id) ON DELETE CASCADE,
   course_id TEXT NOT NULL REFERENCES "Course"(id) ON DELETE CASCADE,
   rating INTEGER NOT NULL CHECK (rating BETWEEN 1 AND 5),

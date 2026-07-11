@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { useLocale, useT } from "@/components/LocaleProvider";
+import { useT } from "@/components/LocaleProvider";
 import { useDashboardTable, dateLocaleForUi } from "@/lib/i18n/dashboard-table";
 import { fillMessage } from "@/lib/i18n/interpolate";
 
@@ -43,11 +43,10 @@ export function SubscriptionStudentsClient({
 }) {
   const router = useRouter();
   const t = useT();
-  const locale = useLocale();
   const Sc = "dashboard.subscriptionStudentsClient";
   const { dir, thClass } = useDashboardTable();
   const egp = t("common.egyptianPoundShort");
-  const dateLoc = dateLocaleForUi(locale);
+  const dateLoc = dateLocaleForUi();
   const [rows, setRows] = useState(initialRows);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");

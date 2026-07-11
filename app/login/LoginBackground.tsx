@@ -3,6 +3,21 @@
 import { useEffect, useRef } from "react";
 import * as THREE from "three";
 
+const FALLBACK_PRIMARY = new THREE.Vector3(0.6353, 0.9608, 0.8588);
+
+function readPrimaryColorVec3(): THREE.Vector3 {
+  if (typeof window === "undefined") return FALLBACK_PRIMARY.clone();
+  const raw = getComputedStyle(document.documentElement).getPropertyValue("--color-primary").trim();
+  if (!raw) return FALLBACK_PRIMARY.clone();
+  try {
+    const color = new THREE.Color();
+    color.setStyle(raw);
+    return new THREE.Vector3(color.r, color.g, color.b);
+  } catch {
+    return FALLBACK_PRIMARY.clone();
+  }
+}
+
 export default function LoginBackground() {
   const mountRef = useRef<HTMLDivElement | null>(null);
 
@@ -12,28 +27,17 @@ export default function LoginBackground() {
     let renderer: THREE.WebGLRenderer;
     let material: THREE.ShaderMaterial;
     let clock: THREE.Clock;
-    let observer: MutationObserver | null = null;
     const mouse = new THREE.Vector2(0.5, 0.5);
     const targetMouse = new THREE.Vector2(0.5, 0.5);
     const uniforms = {
       t: { value: 0.0 },
       r: { value: new THREE.Vector2(1, 1) },
       mouse: { value: new THREE.Vector2(0.5, 0.5) },
-      baseColor: { value: new THREE.Color("#2dd4bf") },
+      baseColor: { value: readPrimaryColorVec3() },
     };
 
-    function updateBaseColor() {
-      try {
-        const root = document.documentElement;
-        const css = getComputedStyle(root);
-        const raw =
-          css.getPropertyValue("--color-primary")?.trim() ||
-          css.getPropertyValue("--platform-primary")?.trim() ||
-          "#2dd4bf";
-        uniforms.baseColor.value = new THREE.Color(raw);
-      } catch {
-        // Ignore color parsing errors; keep previous value.
-      }
+    function syncThemeColor() {
+      uniforms.baseColor.value.copy(readPrimaryColorVec3());
     }
 
     function init() {
@@ -171,18 +175,19 @@ export default function LoginBackground() {
       });
       const mesh = new THREE.Mesh(geometry, material);
       scene.add(mesh);
-
-      updateBaseColor();
-      observer = new MutationObserver(() => updateBaseColor());
-      observer.observe(document.documentElement, {
-        attributes: true,
-        attributeFilter: ["class", "style"],
-      });
-
       window.addEventListener("mousemove", onMouseMove);
       window.addEventListener("touchmove", onTouchMove);
       window.addEventListener("resize", onWindowResize);
+      syncThemeColor();
     }
+
+    const themeObserver = new MutationObserver(() => {
+      syncThemeColor();
+    });
+    themeObserver.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ["class", "style"],
+    });
 
     function onMouseMove(event: MouseEvent) {
       targetMouse.x = event.clientX / window.innerWidth;
@@ -218,9 +223,8 @@ export default function LoginBackground() {
     animate();
 
     return () => {
+      themeObserver.disconnect();
       cancelAnimationFrame(animationFrameId);
-      observer?.disconnect();
-      observer = null;
       window.removeEventListener("mousemove", onMouseMove);
       window.removeEventListener("touchmove", onTouchMove);
       window.removeEventListener("resize", onWindowResize);

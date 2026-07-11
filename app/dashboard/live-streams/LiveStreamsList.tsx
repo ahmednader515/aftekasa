@@ -21,7 +21,7 @@ export function LiveStreamsList({ streams }: { streams: StreamRow[] }) {
   const t = useT();
   const L = "dashboard.liveStreamsList";
   const { locale, dir, thClass } = useDashboardTable();
-  const dateLocale = dateLocaleForUi(locale);
+  const dateLocale = dateLocaleForUi();
   const dash = t("dashboard.studentsPage.dash");
   const [deletingId, setDeletingId] = useState<string | null>(null);
 

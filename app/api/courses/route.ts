@@ -6,13 +6,17 @@ import {
   courseExistsBySlug,
   createCourse,
   createLesson,
-  createQuiz,
-  createQuestion,
-  createQuestionOption,
   findCategoryByNameForDashboard,
   createCategory,
   categoryIsManageableOnDashboard,
+  assertAssignableTeacher,
 } from "@/lib/db";
+import {
+  saveCourseQuizzes,
+  type CourseContentOrderEntry,
+  type CourseQuizInput,
+} from "@/lib/save-course-quizzes";
+import { revalidatePublicCache, PUBLIC_CACHE_TAGS } from "@/lib/public-data-cache";
 
 export async function GET() {
   try {
@@ -28,9 +32,7 @@ export async function GET() {
 }
 
 type LessonInput = { title: string; titleAr?: string; videoUrl?: string; content?: string; pdfUrl?: string };
-type QuestionOptionInput = { text: string; isCorrect: boolean };
-type QuestionInput = { type: "MULTIPLE_CHOICE" | "ESSAY" | "TRUE_FALSE"; questionText: string; options?: QuestionOptionInput[] };
-type QuizInput = { title: string; timeLimitMinutes?: number | null; questions: QuestionInput[] };
+type QuizInput = CourseQuizInput;
 
 export async function POST(request: NextRequest) {
   const session = await getServerSession(authOptions);
@@ -57,9 +59,10 @@ export async function POST(request: NextRequest) {
     categoryNameAr?: string;
     categoryNameEn?: string;
     acceptsHomework?: boolean;
+    teacherId?: string;
     lessons?: LessonInput[];
     quizzes?: QuizInput[];
-    contentOrder?: Array<{ type: "lesson"; index: number } | { type: "quiz"; index: number }>;
+    contentOrder?: CourseContentOrderEntry[];
   };
   try {
     body = await request.json();
@@ -68,12 +71,12 @@ export async function POST(request: NextRequest) {
   }
 
   const titleAr = (body.titleAr ?? body.title)?.trim();
-  const titleEn = (body.titleEn ?? body.title)?.trim();
+  const titleEn = (body.titleEn ?? titleAr)?.trim();
   const slug = body.slug?.trim();
   const descriptionAr = (body.descriptionAr ?? body.description)?.trim();
-  const descriptionEn = (body.descriptionEn ?? "").trim();
-  if (!titleAr || !titleEn || !slug || !descriptionAr || !descriptionEn) {
-    return NextResponse.json({ error: "العنوان والوصف بالعربية والإنجليزية مطلوبة" }, { status: 400 });
+  const descriptionEn = (body.descriptionEn ?? descriptionAr)?.trim();
+  if (!titleAr || !slug || !descriptionAr) {
+    return NextResponse.json({ error: "العنوان والوصف بالعربية مطلوبة" }, { status: 400 });
   }
 
   const exists = await courseExistsBySlug(slug.trim());
@@ -81,14 +84,31 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "رابط الدورة مستخدم مسبقاً" }, { status: 400 });
   }
 
+  const role = session.user.role;
+  let assignedTeacherId: string | null = null;
+  if (role === "ADMIN") {
+    const teacherId = body.teacherId?.trim();
+    if (!teacherId) {
+      return NextResponse.json({ error: "يجب اختيار مدرس للكورس" }, { status: 400 });
+    }
+    try {
+      await assertAssignableTeacher(teacherId);
+      assignedTeacherId = teacherId;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "المدرس المحدد غير صالح";
+      return NextResponse.json({ error: msg }, { status: 400 });
+    }
+  }
+
   let categoryId: string | null = null;
   const catNameAr = (body.categoryNameAr ?? body.categoryName)?.trim();
-  const catNameEn = (body.categoryNameEn ?? body.categoryName)?.trim();
-  const role = session.user.role;
+  const catNameEn = (body.categoryNameEn ?? catNameAr)?.trim();
+  const categoryOwnerId =
+    role === "ADMIN" && assignedTeacherId ? assignedTeacherId : session.user.id;
   if (catNameAr || catNameEn) {
     let cat =
-      (catNameAr ? await findCategoryByNameForDashboard(catNameAr, session.user.id, role) : null) ??
-      (catNameEn ? await findCategoryByNameForDashboard(catNameEn, session.user.id, role) : null);
+      (catNameAr ? await findCategoryByNameForDashboard(catNameAr, categoryOwnerId, role) : null) ??
+      (catNameEn ? await findCategoryByNameForDashboard(catNameEn, categoryOwnerId, role) : null);
     if (!cat) {
       const slugBase = (catNameEn || catNameAr || "cat");
       const slugCat = slugBase.toLowerCase().replace(/\s+/g, "-").replace(/[^\w\u0600-\u06FF-]+/g, "") || "cat";
@@ -97,7 +117,7 @@ export async function POST(request: NextRequest) {
         name: catNameEn || catNameAr || slugBase,
         name_ar: catNameAr || catNameEn || slugBase,
         slug: uniqueSlug,
-        created_by_id: session.user.id,
+        created_by_id: categoryOwnerId,
       });
     }
     categoryId = cat.id;
@@ -113,17 +133,18 @@ export async function POST(request: NextRequest) {
   let course;
   try {
     course = await createCourse({
-      title: titleEn,
+      title: titleEn || titleAr,
       title_ar: titleAr,
       slug,
       description: descriptionAr,
       description_en: descriptionEn,
       short_desc: (body.shortDescAr ?? body.shortDesc)?.trim() || null,
-      short_desc_en: (body.shortDescEn ?? "").trim() || null,
+      short_desc_en: (body.shortDescEn ?? body.shortDescAr ?? body.shortDesc)?.trim() || null,
       image_url: body.imageUrl?.trim() || null,
       price: body.price ?? 0,
       is_published: true,
       created_by_id: session.user.id,
+      assigned_teacher_id: assignedTeacherId,
       max_quiz_attempts: body.maxQuizAttempts ?? null,
       category_id: categoryId,
       accepts_homework: !!body.acceptsHomework,
@@ -168,40 +189,15 @@ export async function POST(request: NextRequest) {
     });
   }
 
-  for (let qi = 0; qi < quizzes.length; qi++) {
-    const q = quizzes[qi];
-    const order = contentOrder.findIndex((e) => e.type === "quiz" && e.index === qi);
-    const orderVal = order >= 0 ? order : lessons.length + qi;
-    const mins = q.timeLimitMinutes;
-    const timeLimitMinutes =
-      typeof mins === "number" && Number.isFinite(mins) && mins >= 1 ? mins : null;
-    const quiz = await createQuiz({
-      course_id: course.id,
-      title: q.title?.trim() || `اختبار ${qi + 1}`,
-      order: orderVal,
-      time_limit_minutes: timeLimitMinutes,
-    });
-    const questions = q.questions ?? [];
-    for (let qti = 0; qti < questions.length; qti++) {
-      const qt = questions[qti];
-      const qType = qt.type === "ESSAY" ? "ESSAY" : qt.type === "TRUE_FALSE" ? "TRUE_FALSE" : "MULTIPLE_CHOICE";
-      const question = await createQuestion({
-        quiz_id: quiz.id,
-        type: qType,
-        question_text: qt.questionText?.trim() || "",
-        order: qti + 1,
-      });
-      if ((qt.type === "MULTIPLE_CHOICE" || qt.type === "TRUE_FALSE") && Array.isArray(qt.options)) {
-        for (const opt of qt.options) {
-          await createQuestionOption({
-            question_id: question.id,
-            text: opt.text?.trim() || "",
-            is_correct: !!opt.isCorrect,
-          });
-        }
-      }
-    }
-  }
+  await saveCourseQuizzes({
+    courseId: course.id,
+    lessonsCount: lessons.length,
+    quizzes,
+    contentOrder,
+    replaceOwned: false,
+  });
+
+  revalidatePublicCache(PUBLIC_CACHE_TAGS.courses);
 
   return NextResponse.json({ id: course.id, title: course.title, slug: course.slug });
 }

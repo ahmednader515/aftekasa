@@ -4,18 +4,51 @@ import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useT } from "@/components/LocaleProvider";
 import { CourseFormSaveOverlay } from "../../CourseFormSaveOverlay";
+import {
+  type ContentOrderEntry,
+  type LinkedQuizRow,
+  type LinkableQuizOption,
+  type QuizRow,
+  type ParentQuizRef,
+  buildParentQuizOptions,
+  parentRefFromKey,
+  parentRefKey,
+  resolveParentQuizRefFromId,
+} from "../../course-quiz-form-types";
+import { QuestionImageField } from "../../QuestionImageField";
+
+export type { ContentOrderEntry };
 
 type CategoryOption = { id: string; name: string; nameAr?: string | null };
-type LessonRow = { title: string; videoUrl: string; content: string; pdfUrl: string; acceptsHomework: boolean };
+type TeacherOption = { id: string; name: string | null; email: string | null };
+type LessonRow = { id?: string; title: string; videoUrl: string; content: string; pdfUrl: string; acceptsHomework: boolean };
 type QuestionOptionRow = { text: string; isCorrect: boolean };
-type QuestionRow = { type: "MULTIPLE_CHOICE" | "TRUE_FALSE"; questionText: string; options: QuestionOptionRow[] };
-type QuizRow = { title: string; timeLimitMinutes: string; questions: QuestionRow[] };
-
-export type ContentOrderEntry = { type: "lesson"; index: number } | { type: "quiz"; index: number };
+type QuestionRow = { type: "MULTIPLE_CHOICE" | "TRUE_FALSE"; questionText: string; imageUrl: string; options: QuestionOptionRow[] };
 
 /** API payloads may include legacy ESSAY questions. */
-type InitialQuestionRow = { type: "MULTIPLE_CHOICE" | "ESSAY" | "TRUE_FALSE"; questionText: string; options?: QuestionOptionRow[] };
-type InitialQuizRow = { title: string; timeLimitMinutes?: number | null; questions: InitialQuestionRow[] };
+type InitialQuestionRow = {
+  type: "MULTIPLE_CHOICE" | "ESSAY" | "TRUE_FALSE";
+  questionText: string;
+  imageUrl?: string;
+  options?: QuestionOptionRow[];
+};
+type InitialQuizRow = {
+  id?: string;
+  title: string;
+  quizType?: "NORMAL" | "REMEDIAL";
+  parentQuizId?: string | null;
+  timeLimitMinutes?: number | null;
+  maxAttempts?: number | null;
+  questions: InitialQuestionRow[];
+};
+type InitialLinkedQuizRow = {
+  id: string;
+  title: string;
+  ownerCourseTitle: string;
+  ownerCourseTitleAr?: string | null;
+  quizType?: string;
+  order?: number;
+};
 
 type InitialData = {
   id: string;
@@ -30,15 +63,34 @@ type InitialData = {
   isPublished: boolean;
   maxQuizAttempts: number | null;
   categoryId: string;
+  teacherId?: string;
   lessons: LessonRow[];
   quizzes: InitialQuizRow[];
+  linkedQuizzes?: InitialLinkedQuizRow[];
   contentOrder: ContentOrderEntry[];
 };
 
 const defaultLesson: LessonRow = { title: "", videoUrl: "", content: "", pdfUrl: "", acceptsHomework: false };
-const defaultQuiz: QuizRow = { title: "", timeLimitMinutes: "", questions: [{ type: "MULTIPLE_CHOICE", questionText: "", options: [{ text: "", isCorrect: false }] }] };
+const defaultQuiz: QuizRow = {
+  title: "",
+  timeLimitMinutes: "",
+  maxAttempts: "",
+  quizType: "NORMAL",
+  parentQuizRef: null,
+  questions: [{ type: "MULTIPLE_CHOICE", questionText: "", imageUrl: "", options: [{ text: "", isCorrect: false }] }],
+};
 
-export function EditCourseForm({ courseId, initialData }: { courseId: string; initialData: InitialData }) {
+export function EditCourseForm({
+  courseId,
+  initialData,
+  isAdmin = false,
+  teachers = [],
+}: {
+  courseId: string;
+  initialData: InitialData;
+  isAdmin?: boolean;
+  teachers?: TeacherOption[];
+}) {
   const router = useRouter();
   const t = useT();
   const Cf = "dashboard.courseForm";
@@ -48,6 +100,7 @@ export function EditCourseForm({ courseId, initialData }: { courseId: string; in
   ];
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [teacherId, setTeacherId] = useState(initialData.teacherId ?? "");
   const [categories, setCategories] = useState<CategoryOption[]>([]);
   const [form, setForm] = useState({
     titleAr: initialData.titleAr,
@@ -69,7 +122,11 @@ export function EditCourseForm({ courseId, initialData }: { courseId: string; in
       ? initialData.lessons.map((l) => {
           const r = l as Record<string, unknown>;
           return {
-            ...l,
+            id: r.id != null ? String(r.id) : undefined,
+            title: String(r.title ?? ""),
+            videoUrl: String(r.videoUrl ?? r.video_url ?? ""),
+            content: String(r.content ?? ""),
+            pdfUrl: String(r.pdfUrl ?? r.pdf_url ?? ""),
             acceptsHomework: Boolean(r.acceptsHomework ?? r.accepts_homework ?? false),
           };
         })
@@ -108,8 +165,22 @@ export function EditCourseForm({ courseId, initialData }: { courseId: string; in
   const [quizzes, setQuizzes] = useState<QuizRow[]>(
     initialData.quizzes.length > 0
       ? initialData.quizzes.map((q) => ({
+          id: q.id,
           title: q.title,
           timeLimitMinutes: q.timeLimitMinutes != null ? String(q.timeLimitMinutes) : "",
+          maxAttempts: q.maxAttempts != null ? String(q.maxAttempts) : "",
+          quizType: q.quizType === "REMEDIAL" ? "REMEDIAL" : "NORMAL",
+          parentQuizRef: resolveParentQuizRefFromId(
+            q.parentQuizId,
+            initialData.quizzes,
+            (initialData.linkedQuizzes ?? []).map((l) => ({
+              quizId: l.id,
+              title: l.title,
+              ownerCourseTitle: l.ownerCourseTitle,
+              ownerCourseTitleAr: l.ownerCourseTitleAr,
+              quizType: l.quizType,
+            })),
+          ),
           questions: q.questions.length > 0
             ? q.questions.map((qt) => {
                 const type = qt.type === "ESSAY" ? "MULTIPLE_CHOICE" as const : qt.type;
@@ -121,19 +192,45 @@ export function EditCourseForm({ courseId, initialData }: { courseId: string; in
                     : qt.options?.length
                       ? qt.options
                       : [{ text: "", isCorrect: false }];
-                return { type, questionText: qt.questionText, options };
+                return { type, questionText: qt.questionText, imageUrl: qt.imageUrl ?? "", options };
               })
-            : [{ type: "MULTIPLE_CHOICE" as const, questionText: "", options: [{ text: "", isCorrect: false }] }],
+            : [{ type: "MULTIPLE_CHOICE" as const, questionText: "", imageUrl: "", options: [{ text: "", isCorrect: false }] }],
         }))
       : [defaultQuiz]
   );
+  const [linkedQuizzes, setLinkedQuizzes] = useState<LinkedQuizRow[]>(
+    (initialData.linkedQuizzes ?? []).map((l) => ({
+      quizId: l.id,
+      title: l.title,
+      ownerCourseTitle: l.ownerCourseTitle,
+      ownerCourseTitleAr: l.ownerCourseTitleAr,
+      quizType: l.quizType,
+    })),
+  );
+  const [linkModalOpen, setLinkModalOpen] = useState(false);
+  const [linkableQuizzes, setLinkableQuizzes] = useState<LinkableQuizOption[]>([]);
+  const [linkLoading, setLinkLoading] = useState(false);
   const [contentOrder, setContentOrder] = useState<ContentOrderEntry[]>(() => {
     const co = initialData.contentOrder;
     if (co?.length) return co;
-    return [
+    const linked = initialData.linkedQuizzes ?? [];
+    const entries: ContentOrderEntry[] = [
       ...initialData.lessons.map((_, i) => ({ type: "lesson" as const, index: i })),
       ...initialData.quizzes.map((_, i) => ({ type: "quiz" as const, index: i })),
     ];
+    for (const l of linked) {
+      entries.push({ type: "linkedQuiz", quizId: l.id });
+    }
+    entries.sort((a, b) => {
+      const orderOf = (e: ContentOrderEntry) => {
+        if (e.type === "lesson") return e.index;
+        if (e.type === "quiz") return e.index;
+        const found = linked.find((x) => x.id === e.quizId);
+        return found?.order ?? 999;
+      };
+      return orderOf(a) - orderOf(b);
+    });
+    return entries.length ? entries : co;
   });
   const [imageUploading, setImageUploading] = useState(false);
   const [imageUploadError, setImageUploadError] = useState("");
@@ -160,11 +257,73 @@ export function EditCourseForm({ courseId, initialData }: { courseId: string; in
     setContentOrder((c) => [...c, { type: "quiz", index: c.filter((x) => x.type === "quiz").length }]);
   }
   function removeQuiz(qi: number) {
-    setQuizzes((q) => q.filter((_, i) => i !== qi));
+    setQuizzes((prev) =>
+      prev
+        .filter((_, i) => i !== qi)
+        .map((q) => {
+          if (q.parentQuizRef?.type === "owned" && q.parentQuizRef.index === qi) {
+            return { ...q, parentQuizRef: null };
+          }
+          if (q.parentQuizRef?.type === "owned" && q.parentQuizRef.index > qi) {
+            return { ...q, parentQuizRef: { type: "owned", index: q.parentQuizRef.index - 1 } };
+          }
+          return q;
+        }),
+    );
     setContentOrder((c) =>
       c
         .filter((e) => !(e.type === "quiz" && e.index === qi))
-        .map((e) => (e.type === "quiz" && e.index > qi ? { ...e, index: e.index - 1 } : e))
+        .map((e) => (e.type === "quiz" && e.index > qi ? { ...e, index: e.index - 1 } : e)),
+    );
+  }
+  function updateQuizType(qi: number, quizType: "NORMAL" | "REMEDIAL") {
+    setQuizzes((q) =>
+      q.map((x, i) =>
+        i === qi ? { ...x, quizType, parentQuizRef: quizType === "NORMAL" ? null : x.parentQuizRef } : x,
+      ),
+    );
+  }
+  function updateQuizParentRef(qi: number, ref: ParentQuizRef | null) {
+    setQuizzes((q) => q.map((x, i) => (i === qi ? { ...x, parentQuizRef: ref } : x)));
+  }
+  async function openLinkModal() {
+    setLinkModalOpen(true);
+    setLinkLoading(true);
+    try {
+      const res = await fetch(`/api/dashboard/quizzes/linkable?excludeCourseId=${encodeURIComponent(courseId)}`);
+      const data = await res.json().catch(() => []);
+      setLinkableQuizzes(Array.isArray(data) ? data : []);
+    } finally {
+      setLinkLoading(false);
+    }
+  }
+  function linkExistingQuiz(option: LinkableQuizOption) {
+    if (linkedQuizzes.some((l) => l.quizId === option.id)) {
+      setLinkModalOpen(false);
+      return;
+    }
+    setLinkedQuizzes((prev) => [
+      ...prev,
+      {
+        quizId: option.id,
+        title: option.title,
+        ownerCourseTitle: option.courseTitle,
+        ownerCourseTitleAr: option.courseTitleAr,
+        quizType: "NORMAL",
+      },
+    ]);
+    setContentOrder((c) => [...c, { type: "linkedQuiz", quizId: option.id }]);
+    setLinkModalOpen(false);
+  }
+  function unlinkQuiz(quizId: string) {
+    setLinkedQuizzes((prev) => prev.filter((l) => l.quizId !== quizId));
+    setContentOrder((c) => c.filter((e) => !(e.type === "linkedQuiz" && e.quizId === quizId)));
+    setQuizzes((prev) =>
+      prev.map((q) =>
+        q.parentQuizRef?.type === "linked" && q.parentQuizRef.quizId === quizId
+          ? { ...q, parentQuizRef: null }
+          : q,
+      ),
     );
   }
   function updateQuizTitle(qi: number, title: string) {
@@ -173,15 +332,25 @@ export function EditCourseForm({ courseId, initialData }: { courseId: string; in
   function updateQuizTimeLimit(qi: number, value: string) {
     setQuizzes((q) => q.map((x, i) => (i === qi ? { ...x, timeLimitMinutes: value } : x)));
   }
+  function updateQuizMaxAttempts(qi: number, value: string) {
+    setQuizzes((q) => q.map((x, i) => (i === qi ? { ...x, maxAttempts: value } : x)));
+  }
   function addQuestion(qi: number) {
     setQuizzes((q) =>
       q.map((x, i) =>
-        i === qi ? { ...x, questions: [...x.questions, { type: "MULTIPLE_CHOICE" as const, questionText: "", options: [{ text: "", isCorrect: false }] }] } : x
+        i === qi ? { ...x, questions: [...x.questions, { type: "MULTIPLE_CHOICE" as const, questionText: "", imageUrl: "", options: [{ text: "", isCorrect: false }] }] } : x
       )
     );
   }
   function removeQuestion(qi: number, qti: number) {
     setQuizzes((q) => q.map((x, i) => (i === qi ? { ...x, questions: x.questions.filter((_, j) => j !== qti) } : x)));
+  }
+  function updateQuestionImageUrl(qi: number, qti: number, imageUrl: string) {
+    setQuizzes((q) =>
+      q.map((x, i) =>
+        i === qi ? { ...x, questions: x.questions.map((qt, j) => (j === qti ? { ...qt, imageUrl } : qt)) } : x
+      )
+    );
   }
   function updateQuestion(qi: number, qti: number, field: "type" | "questionText", value: string) {
     setQuizzes((q) =>
@@ -257,6 +426,10 @@ export function EditCourseForm({ courseId, initialData }: { courseId: string; in
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError("");
+    if (isAdmin && !teacherId.trim()) {
+      setError(t(`${Cf}.assignTeacherRequired`, "Please select a teacher for this course."));
+      return;
+    }
     setLoading(true);
     try {
     const validLessons = lessons.filter((l) => l.title.trim());
@@ -264,16 +437,24 @@ export function EditCourseForm({ courseId, initialData }: { courseId: string; in
       .filter((q) => q.title.trim())
       .filter((q) => q.questions.some((qt) => qt.questionText.trim()) && q.questions.filter((qt) => qt.questionText.trim()).length > 0)
       .map((q) => ({
+        id: q.id,
         title: q.title.trim(),
+        quizType: q.quizType,
+        parentQuizRef: q.quizType === "REMEDIAL" ? q.parentQuizRef : null,
         timeLimitMinutes: (() => {
           const n = parseInt(q.timeLimitMinutes, 10);
           return Number.isFinite(n) && n >= 1 ? n : undefined;
+        })(),
+        maxAttempts: (() => {
+          const n = parseInt(q.maxAttempts, 10);
+          return Number.isFinite(n) && n >= 1 ? n : null;
         })(),
         questions: q.questions
           .filter((qt) => qt.questionText.trim())
           .map((qt) => ({
             type: qt.type,
             questionText: qt.questionText.trim(),
+            imageUrl: qt.imageUrl?.trim() || undefined,
             options:
               qt.type === "MULTIPLE_CHOICE"
                 ? qt.options.filter((o) => o.text.trim()).map((o) => ({ text: o.text.trim(), isCorrect: o.isCorrect }))
@@ -286,32 +467,34 @@ export function EditCourseForm({ courseId, initialData }: { courseId: string; in
     const validQuizIndices = quizzes
       .map((q, i) => (q.title.trim() && q.questions.some((qt) => qt.questionText.trim()) ? i : -1))
       .filter((i) => i >= 0);
+    const linkedIds = linkedQuizzes.map((l) => l.quizId);
     const filteredContentOrder = contentOrder
       .filter(
         (e) =>
-          (e.type === "lesson" && validLessonIndices.includes(e.index)) || (e.type === "quiz" && validQuizIndices.includes(e.index))
+          (e.type === "lesson" && validLessonIndices.includes(e.index)) ||
+          (e.type === "quiz" && validQuizIndices.includes(e.index)) ||
+          (e.type === "linkedQuiz" && linkedIds.includes(e.quizId)),
       )
-      .map((e) =>
-        e.type === "lesson"
-          ? { type: "lesson" as const, index: validLessonIndices.indexOf(e.index) }
-          : { type: "quiz" as const, index: validQuizIndices.indexOf(e.index) }
-      );
+      .map((e) => {
+        if (e.type === "lesson") return { type: "lesson" as const, index: validLessonIndices.indexOf(e.index) };
+        if (e.type === "linkedQuiz") return e;
+        return { type: "quiz" as const, index: validQuizIndices.indexOf(e.index) };
+      });
 
     const payload = {
       titleAr: form.titleAr.trim(),
-      titleEn: form.titleEn.trim(),
       descriptionAr: form.descriptionAr.trim(),
-      descriptionEn: form.descriptionEn.trim(),
       shortDescAr: form.shortDescAr.trim() || undefined,
-      shortDescEn: form.shortDescEn.trim() || undefined,
       imageUrl: form.imageUrl.trim() || undefined,
       price: form.price ? parseFloat(form.price) : 0,
       isPublished: form.isPublished,
       maxQuizAttempts: form.maxQuizAttempts.trim() ? parseInt(form.maxQuizAttempts, 10) : null,
-      ...(form.categoryNameAr.trim() || form.categoryNameEn.trim()
-        ? { categoryNameAr: form.categoryNameAr.trim(), categoryNameEn: form.categoryNameEn.trim() }
+      ...(isAdmin && teacherId.trim() ? { teacherId: teacherId.trim() } : {}),
+      ...(form.categoryNameAr.trim()
+        ? { categoryNameAr: form.categoryNameAr.trim() }
         : form.categoryId ? { categoryId: form.categoryId } : { categoryId: null }),
       lessons: validLessons.map((l) => ({
+        id: l.id?.trim() || undefined,
         title: l.title.trim(),
         videoUrl: l.videoUrl.trim() || undefined,
         content: l.content.trim() || undefined,
@@ -354,6 +537,27 @@ export function EditCourseForm({ courseId, initialData }: { courseId: string; in
       <section className="rounded-[var(--radius-card)] border border-[var(--color-border)] bg-[var(--color-surface)] p-6">
         <h3 className="mb-4 text-lg font-semibold text-[var(--color-foreground)]">{t(`${Cf}.sectionCourseBasics`)}</h3>
         <div className="space-y-4">
+          {isAdmin && (
+            <div>
+              <label className="block text-sm font-medium text-[var(--color-foreground)]">
+                {t(`${Cf}.assignTeacherLabel`, "Assigned teacher")}
+              </label>
+              <select
+                value={teacherId}
+                onChange={(e) => setTeacherId(e.target.value)}
+                required
+                className="mt-1 w-full rounded-[var(--radius-btn)] border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2"
+              >
+                <option value="">{t(`${Cf}.assignTeacherPlaceholder`, "Select a teacher")}</option>
+                {teachers.map((teacher) => (
+                  <option key={teacher.id} value={teacher.id}>
+                    {teacher.name ?? teacher.email ?? teacher.id}
+                    {teacher.name && teacher.email ? ` (${teacher.email})` : ""}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
           <div>
             <label className="block text-sm font-medium text-[var(--color-foreground)]">{t(`${Cf}.courseImageLabel`)}</label>
             {form.imageUrl && (
@@ -405,8 +609,8 @@ export function EditCourseForm({ courseId, initialData }: { courseId: string; in
             <label className="block text-sm font-medium text-[var(--color-foreground)]">{t(`${Cf}.categoryOptional`)}</label>
             <p className="mt-1 text-xs text-[var(--color-muted)]">{t(`${Cf}.categoryHelpChooseOrNew`)}</p>
             <select
-              value={form.categoryNameAr.trim() || form.categoryNameEn.trim() ? "" : form.categoryId}
-              onChange={(e) => setForm((f) => ({ ...f, categoryId: e.target.value, categoryNameAr: "", categoryNameEn: "" }))}
+              value={form.categoryNameAr.trim() ? "" : form.categoryId}
+              onChange={(e) => setForm((f) => ({ ...f, categoryId: e.target.value, categoryNameAr: "" }))}
               className="mt-1 w-full rounded-[var(--radius-btn)] border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2"
             >
               <option value="">{t(`${Cf}.noCategoryOption`)}</option>
@@ -417,19 +621,12 @@ export function EditCourseForm({ courseId, initialData }: { courseId: string; in
               ))}
             </select>
             <div className="mt-2">
-              <label className="block text-xs text-[var(--color-muted)]">{t(`${Cf}.newCategoryBilingualHint`)}</label>
+              <label className="block text-xs text-[var(--color-muted)]">{t(`${Cf}.newCategoryArabicPlaceholder`)}</label>
               <input
                 type="text"
                 value={form.categoryNameAr}
                 onChange={(e) => setForm((f) => ({ ...f, categoryNameAr: e.target.value, categoryId: "" }))}
                 placeholder={t(`${Cf}.newCategoryArabicPlaceholder`)}
-                className="mt-1 w-full rounded-[var(--radius-btn)] border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2 text-sm"
-              />
-              <input
-                type="text"
-                value={form.categoryNameEn}
-                onChange={(e) => setForm((f) => ({ ...f, categoryNameEn: e.target.value, categoryId: "" }))}
-                placeholder={t(`${Cf}.newCategoryEnglishLabel`)}
                 className="mt-1 w-full rounded-[var(--radius-btn)] border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2 text-sm"
               />
             </div>
@@ -459,33 +656,16 @@ export function EditCourseForm({ courseId, initialData }: { courseId: string; in
             <input type="number" step="0.01" min="0" value={form.price} onChange={(e) => setForm((f) => ({ ...f, price: e.target.value }))} className="mt-1 w-full rounded-[var(--radius-btn)] border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2" />
           </div>
           <div>
-            <label className="block text-sm font-medium text-[var(--color-foreground)]">{t(`${Cf}.quizAttemptsHint`)}</label>
-            <input type="number" min="1" placeholder={t(`${Cf}.unlimitedPlaceholderLine`)} value={form.maxQuizAttempts} onChange={(e) => setForm((f) => ({ ...f, maxQuizAttempts: e.target.value }))} className="mt-1 w-full rounded-[var(--radius-btn)] border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2" />
-            <p className="mt-1 text-xs text-[var(--color-muted)]">{t(`${Cf}.quizAttemptsExplanation`)}</p>
-          </div>
-          <div>
             <label className="block text-sm font-medium text-[var(--color-foreground)]">{t(`${Cf}.titleArRequired`)}</label>
             <input type="text" value={form.titleAr} onChange={(e) => setForm((f) => ({ ...f, titleAr: e.target.value }))} className="mt-1 w-full rounded-[var(--radius-btn)] border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2" required />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-[var(--color-foreground)]">{t(`${Cf}.titleEnRequired`)}</label>
-            <input type="text" value={form.titleEn} onChange={(e) => setForm((f) => ({ ...f, titleEn: e.target.value }))} className="mt-1 w-full rounded-[var(--radius-btn)] border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2" required />
           </div>
           <div>
             <label className="block text-sm font-medium text-[var(--color-foreground)]">{t(`${Cf}.shortDescAr`)}</label>
             <input type="text" maxLength={300} value={form.shortDescAr} onChange={(e) => setForm((f) => ({ ...f, shortDescAr: e.target.value }))} className="mt-1 w-full rounded-[var(--radius-btn)] border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2" />
           </div>
           <div>
-            <label className="block text-sm font-medium text-[var(--color-foreground)]">{t(`${Cf}.shortDescEn`)}</label>
-            <input type="text" maxLength={300} value={form.shortDescEn} onChange={(e) => setForm((f) => ({ ...f, shortDescEn: e.target.value }))} className="mt-1 w-full rounded-[var(--radius-btn)] border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2" />
-          </div>
-          <div>
             <label className="block text-sm font-medium text-[var(--color-foreground)]">{t(`${Cf}.fullDescArRequired`)}</label>
             <textarea value={form.descriptionAr} onChange={(e) => setForm((f) => ({ ...f, descriptionAr: e.target.value }))} rows={4} className="mt-1 w-full rounded-[var(--radius-btn)] border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2" required />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-[var(--color-foreground)]">{t(`${Cf}.fullDescEnRequired`)}</label>
-            <textarea value={form.descriptionEn} onChange={(e) => setForm((f) => ({ ...f, descriptionEn: e.target.value }))} rows={4} className="mt-1 w-full rounded-[var(--radius-btn)] border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2" required />
           </div>
           <label className="flex items-center gap-2">
             <input type="checkbox" checked={form.isPublished} onChange={(e) => setForm((f) => ({ ...f, isPublished: e.target.checked }))} />
@@ -564,17 +744,61 @@ export function EditCourseForm({ courseId, initialData }: { courseId: string; in
                 <button type="button" onClick={() => removeQuiz(qi)} className="mr-2 text-sm text-red-600 hover:underline">{t(`${Cf}.deleteQuiz`)}</button>
               )}
             </div>
-            <div className="mb-3">
-              <label className="block text-sm font-medium text-[var(--color-foreground)]">{t(`${Cf}.quizDurationMinutes`)}</label>
-              <input
-                type="number"
-                min="1"
-                placeholder={t(`${Cf}.openTimePlaceholderLine`)}
-                value={quiz.timeLimitMinutes}
-                onChange={(e) => updateQuizTimeLimit(qi, e.target.value)}
-                className="mt-1 w-full max-w-xs rounded-[var(--radius-btn)] border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2"
-              />
-              <p className="mt-1 text-xs text-[var(--color-muted)]">{t(`${Cf}.quizTimeHelp`)}</p>
+            <div className="mb-3 grid gap-3 sm:grid-cols-2">
+              <div>
+                <label className="block text-sm font-medium text-[var(--color-foreground)]">{t(`${Cf}.quizTypeLabel`, "Quiz type")}</label>
+                <select
+                  value={quiz.quizType}
+                  onChange={(e) => updateQuizType(qi, e.target.value as "NORMAL" | "REMEDIAL")}
+                  className="mt-1 w-full rounded-[var(--radius-btn)] border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2 text-sm"
+                >
+                  <option value="NORMAL">{t(`${Cf}.quizTypeNormal`, "Normal")}</option>
+                  <option value="REMEDIAL">{t(`${Cf}.quizTypeRemedial`, "Remedial (after failing parent quiz)")}</option>
+                </select>
+              </div>
+              {quiz.quizType === "REMEDIAL" && (
+                <div>
+                  <label className="block text-sm font-medium text-[var(--color-foreground)]">{t(`${Cf}.parentQuizLabel`, "Parent quiz")}</label>
+                  <select
+                    value={parentRefKey(quiz.parentQuizRef)}
+                    onChange={(e) => updateQuizParentRef(qi, parentRefFromKey(e.target.value, linkedQuizzes))}
+                    className="mt-1 w-full rounded-[var(--radius-btn)] border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2 text-sm"
+                  >
+                    <option value="">{t(`${Cf}.selectParentQuiz`, "Select parent quiz")}</option>
+                    {buildParentQuizOptions(contentOrder, quizzes, linkedQuizzes, qi).map((opt) => (
+                      <option key={parentRefKey(opt.ref)} value={parentRefKey(opt.ref)}>
+                        {opt.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+            </div>
+            <div className="mb-3 grid gap-3 sm:grid-cols-2">
+              <div>
+                <label className="block text-sm font-medium text-[var(--color-foreground)]">{t(`${Cf}.quizDurationMinutes`)}</label>
+                <input
+                  type="number"
+                  min="1"
+                  placeholder={t(`${Cf}.openTimePlaceholderLine`)}
+                  value={quiz.timeLimitMinutes}
+                  onChange={(e) => updateQuizTimeLimit(qi, e.target.value)}
+                  className="mt-1 w-full rounded-[var(--radius-btn)] border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2"
+                />
+                <p className="mt-1 text-xs text-[var(--color-muted)]">{t(`${Cf}.quizTimeHelp`)}</p>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-[var(--color-foreground)]">{t(`${Cf}.quizAttemptsHint`)}</label>
+                <input
+                  type="number"
+                  min="1"
+                  placeholder={t(`${Cf}.unlimitedPlaceholderLine`)}
+                  value={quiz.maxAttempts}
+                  onChange={(e) => updateQuizMaxAttempts(qi, e.target.value)}
+                  className="mt-1 w-full rounded-[var(--radius-btn)] border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2"
+                />
+                <p className="mt-1 text-xs text-[var(--color-muted)]">{t(`${Cf}.quizAttemptsPerQuizExplanation`)}</p>
+              </div>
             </div>
             {quiz.questions.map((q, qti) => (
               <div key={qti} className="mb-4 rounded border border-[var(--color-border)] bg-[var(--color-surface)] p-3">
@@ -589,6 +813,7 @@ export function EditCourseForm({ courseId, initialData }: { courseId: string; in
                   )}
                 </div>
                 <textarea value={q.questionText} onChange={(e) => updateQuestion(qi, qti, "questionText", e.target.value)} placeholder={t(`${Cf}.questionTextPlaceholder`)} rows={2} className="mb-2 w-full rounded border border-[var(--color-border)] bg-[var(--color-background)] px-2 py-1 text-sm" />
+                <QuestionImageField value={q.imageUrl} onChange={(url) => updateQuestionImageUrl(qi, qti, url)} />
                 {(q.type === "MULTIPLE_CHOICE" || q.type === "TRUE_FALSE") && (
                   <div className="space-y-1">
                     <p className="text-xs text-[var(--color-muted)]">
@@ -635,7 +860,60 @@ export function EditCourseForm({ courseId, initialData }: { courseId: string; in
             <button type="button" onClick={() => addQuestion(qi)} className="mb-2 text-sm text-[var(--color-primary)] hover:underline">{t(`${Cf}.addQuestionBtn`)}</button>
           </div>
         ))}
+        {linkedQuizzes.map((linked) => (
+          <div key={linked.quizId} className="mb-4 rounded-[var(--radius-btn)] border border-dashed border-[var(--color-primary)]/50 bg-[var(--color-primary)]/5 p-4">
+            <div className="flex flex-wrap items-start justify-between gap-2">
+              <div>
+                <span className="text-xs font-medium text-[var(--color-primary)]">{t(`${Cf}.linkedQuizBadge`, "Linked quiz")}</span>
+                <p className="font-medium text-[var(--color-foreground)]">{linked.title}</p>
+                <p className="text-xs text-[var(--color-muted)]">
+                  {t(`${Cf}.linkedQuizFrom`, "From course")}: {linked.ownerCourseTitleAr ?? linked.ownerCourseTitle}
+                </p>
+              </div>
+              <button type="button" onClick={() => unlinkQuiz(linked.quizId)} className="text-sm text-red-600 hover:underline">
+                {t(`${Cf}.unlinkQuiz`, "Unlink")}
+              </button>
+            </div>
+          </div>
+        ))}
+        <div className="flex flex-wrap gap-2">
         <button type="button" onClick={addQuiz} className="rounded-[var(--radius-btn)] border border-[var(--color-border)] px-4 py-2 text-sm font-medium">{t(`${Cf}.addQuizBtn`)}</button>
+        <button type="button" onClick={openLinkModal} className="rounded-[var(--radius-btn)] border border-[var(--color-primary)] px-4 py-2 text-sm font-medium text-[var(--color-primary)]">
+          {t(`${Cf}.linkExistingQuiz`, "Link existing quiz")}
+        </button>
+        </div>
+        {linkModalOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" role="dialog">
+            <div className="max-h-[80vh] w-full max-w-lg overflow-auto rounded-[var(--radius-card)] border border-[var(--color-border)] bg-[var(--color-surface)] p-6 shadow-lg">
+              <h4 className="text-lg font-semibold text-[var(--color-foreground)]">{t(`${Cf}.linkQuizModalTitle`, "Link quiz from another course")}</h4>
+              {linkLoading ? (
+                <p className="mt-4 text-sm text-[var(--color-muted)]">{t(`${Cf}.loading`, "Loading...")}</p>
+              ) : linkableQuizzes.length === 0 ? (
+                <p className="mt-4 text-sm text-[var(--color-muted)]">{t(`${Cf}.noLinkableQuizzes`, "No quizzes available to link.")}</p>
+              ) : (
+                <ul className="mt-4 space-y-2">
+                  {linkableQuizzes.map((opt) => (
+                    <li key={opt.id}>
+                      <button
+                        type="button"
+                        onClick={() => linkExistingQuiz(opt)}
+                        className="w-full rounded-[var(--radius-btn)] border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2 text-left text-sm hover:border-[var(--color-primary)]"
+                      >
+                        <span className="font-medium text-[var(--color-foreground)]">{opt.title}</span>
+                        <span className="mt-0.5 block text-xs text-[var(--color-muted)]">
+                          {opt.courseTitleAr ?? opt.courseTitle} — {opt.questionCount} {t(`${Cf}.questionsShort`, "questions")}
+                        </span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              <button type="button" onClick={() => setLinkModalOpen(false)} className="mt-4 text-sm text-[var(--color-muted)] hover:underline">
+                {t(`${Cf}.cancelBtnShort`)}
+              </button>
+            </div>
+          </div>
+        )}
       </section>
 
       <section className="rounded-[var(--radius-card)] border border-[var(--color-border)] bg-[var(--color-surface)] p-6">
@@ -648,10 +926,12 @@ export function EditCourseForm({ courseId, initialData }: { courseId: string; in
             const label =
               entry.type === "lesson"
                 ? `${t(`${Cf}.lessonN`)}${entry.index + 1}${lessons[entry.index]?.title?.trim() ? ": " + lessons[entry.index].title.trim() : ""}`
-                : `${t(`${Cf}.orderQuizPrefix`)}${entry.index + 1}${quizzes[entry.index]?.title?.trim() ? ": " + quizzes[entry.index].title.trim() : ""}`;
+                : entry.type === "linkedQuiz"
+                  ? `${t(`${Cf}.linkedQuizBadge`, "Linked quiz")}: ${linkedQuizzes.find((l) => l.quizId === entry.quizId)?.title ?? entry.quizId}`
+                  : `${t(`${Cf}.orderQuizPrefix`)}${entry.index + 1}${quizzes[entry.index]?.title?.trim() ? ": " + quizzes[entry.index].title.trim() : ""}`;
             return (
               <li
-                key={`${entry.type}-${entry.index}-${pos}`}
+                key={`${entry.type}-${entry.type === "linkedQuiz" ? entry.quizId : entry.index}-${pos}`}
                 className="flex items-center justify-between gap-2 rounded-[var(--radius-btn)] border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2"
               >
                 <span className="text-sm text-[var(--color-foreground)]">

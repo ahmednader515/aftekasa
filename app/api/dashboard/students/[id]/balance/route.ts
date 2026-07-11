@@ -21,7 +21,7 @@ export async function POST(
   }
 
   const amount = Number(body.amount);
-  if (Number.isNaN(amount) || amount <= 0) {
+  if (!Number.isInteger(amount) || amount < 0) {
     return NextResponse.json({ error: "المبلغ غير صالح" }, { status: 400 });
   }
 
@@ -30,7 +30,7 @@ export async function POST(
     return NextResponse.json({ error: "الطالب غير موجود" }, { status: 404 });
   }
 
-  const newBalance = String(Math.max(0, Number(student.balance) + amount));
+  const newBalance = String(Math.max(0, amount));
   await updateUser(studentId, { balance: newBalance });
 
   return NextResponse.json({ success: true });

@@ -1,12 +1,21 @@
-import type { Locale } from "./types";
-
+/** Prefer Arabic DB text; fall back to English column if Arabic is empty. */
 export function pickLocalizedText(
-  locale: Locale,
+  _locale: unknown,
   arabicValue: string | null | undefined,
-  englishValue: string | null | undefined,
+  englishValue?: string | null | undefined,
 ): string {
   const ar = (arabicValue ?? "").trim();
   const en = (englishValue ?? "").trim();
-  if (locale === "en") return en || ar;
   return ar || en;
+}
+
+/** Homepage / settings: DB value or translated Arabic default. */
+export function settingTextOrDefault(
+  raw: string | null | undefined,
+  t: (key: string, fallback?: string) => string,
+  messageKey: string,
+  fallback: string,
+): string {
+  const v = (raw ?? "").trim();
+  return v || t(messageKey, fallback);
 }

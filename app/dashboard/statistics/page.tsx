@@ -1,5 +1,6 @@
-import { getSession } from "@/lib/auth-server";
+import { getServerSession } from "next-auth";
 import { redirect } from "next/navigation";
+import { authOptions } from "@/lib/auth";
 import {
   getUsersByRole,
   getEnrollmentsWithCourseByUserId,
@@ -9,12 +10,13 @@ import {
   getQuizAttemptsForTeacher,
   getTotalEarningsForTeacher,
   getCoursesWithCountsForCreator,
+  getCompletedLessonCountsForUsers,
 } from "@/lib/db";
 import { getServerTranslator } from "@/lib/i18n/server";
 import StatisticsContent from "./StatisticsContent";
 
 export default async function StatisticsPage() {
-  const session = await getSession();
+  const session = await getServerSession(authOptions);
   if (!session) redirect("/login");
   const role = session.user.role;
   if (role !== "ADMIN" && role !== "ASSISTANT_ADMIN" && role !== "TEACHER") {
@@ -31,12 +33,18 @@ export default async function StatisticsPage() {
       getCoursesWithCountsForCreator(teacherId),
     ]);
     const myCourseIds = new Set(myCourses.map((row) => String((row as { id?: unknown }).id ?? "")));
+    const myCourseIdList = [...myCourseIds];
 
     const enrollmentsByUser = await Promise.all(
       students.map(async (s) => {
         const all = await getEnrollmentsWithCourseByUserId(s.id);
         return all.filter((e) => myCourseIds.has(e.course.id));
       }),
+    );
+
+    const completedLessonCounts = await getCompletedLessonCountsForUsers(
+      students.map((s) => s.id),
+      myCourseIdList,
     );
 
     const totalEnrollments = enrollmentsByUser.reduce((sum, e) => sum + e.length, 0);
@@ -58,6 +66,7 @@ export default async function StatisticsPage() {
       const userAttempts = attempts.filter((a) => a.userId === s.id);
       return {
         student: { id: s.id, name: s.name, email: s.email },
+        completedLessonsCount: completedLessonCounts.get(s.id) ?? 0,
         enrollments: enrollments.map((e) => ({
           course: { title: e.course.title, titleAr: e.course.titleAr ?? null },
         })),
@@ -98,6 +107,8 @@ export default async function StatisticsPage() {
     students.map((s) => getEnrollmentsWithCourseByUserId(s.id))
   );
 
+  const completedLessonCounts = await getCompletedLessonCountsForUsers(students.map((s) => s.id));
+
   const totalEnrollments = enrollmentsByUser.reduce((sum, e) => sum + e.length, 0);
 
   const attemptsSerialized = attempts.map((a) => ({
@@ -117,6 +128,7 @@ export default async function StatisticsPage() {
     const userAttempts = attempts.filter((a) => a.userId === s.id);
     return {
       student: { id: s.id, name: s.name, email: s.email },
+      completedLessonsCount: completedLessonCounts.get(s.id) ?? 0,
       enrollments: enrollments.map((e) => ({
         course: { title: e.course.title, titleAr: e.course.titleAr ?? null },
       })),

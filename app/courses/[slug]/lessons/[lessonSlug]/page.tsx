@@ -9,15 +9,22 @@ import {
   hasFullCourseAccessAsStudent,
   ensureUserCopyrightCode,
   getHomepageSettings,
+  isLessonCompleteForUser,
 } from "@/lib/db";
-import { PlyrVideoPlayer } from "@/components/plyr-video-player";
+import { LessonVideoPlayer } from "@/components/LessonVideoPlayer";
 import { VideoCopyrightOverlay } from "@/components/video-copyright-overlay";
 import { getYouTubeVideoId } from "@/lib/youtube";
 import { CourseOutlineSidebar } from "@/components/CourseOutlineSidebar";
 import { LessonHomeworkSection } from "./LessonHomeworkSection";
 import { LessonRatingSection } from "./LessonRatingSection";
-import { getLocaleFromCookie, getServerTranslator } from "@/lib/i18n/server";
+import { LessonCompleteButton } from "@/components/LessonCompleteButton";
+import { resolveCourseProgression, shouldApplySequentialProgression } from "@/lib/course-progression-server";
+import { findProgressionRowForLesson } from "@/lib/course-progression";
+import { getServerTranslator } from "@/lib/i18n/server";
 import { pickLocalizedText } from "@/lib/i18n/localized-field";
+import { isCourseSegmentId } from "@/lib/legacy-schema";
+import { prepareLessonContentForDisplay } from "@/lib/lesson-content";
+import { CourseContentAccessDenied } from "@/components/CourseContentAccessDenied";
 
 type Props = { params: Promise<{ slug: string; lessonSlug: string }> };
 
@@ -30,7 +37,7 @@ function decodeSegment(s: string): string {
 }
 
 function isLessonId(segment: string): boolean {
-  return /^c[a-z0-9]{24}$/i.test(segment);
+  return isCourseSegmentId(segment);
 }
 
 function courseHref(course: { slug?: string | null; id: string }): string {
@@ -54,12 +61,12 @@ function quizHref(course: { slug?: string | null; id: string }, quizId: string):
   return `/courses/${courseSeg(course)}/quizzes/${encodeURIComponent(quizId)}`;
 }
 
-type CourseItem =
-  | { type: "lesson"; id: string; slug?: string | null; title: string; titleAr?: string | null }
-  | { type: "quiz"; id: string; title: string; _count?: { questions?: number } };
+type NavItem =
+  | { type: "lesson"; id: string; slug?: string | null; locked: boolean }
+  | { type: "quiz"; id: string; locked: boolean };
 
 export default async function LessonPage({ params }: Props) {
-  const [t, locale] = await Promise.all([getServerTranslator(), getLocaleFromCookie()]);
+  const t = await getServerTranslator();
   const { slug: courseSegment, lessonSlug: lessonSegment } = await params;
   const courseDecoded = decodeSegment(courseSegment);
   const lessonDecoded = decodeSegment(lessonSegment);
@@ -68,12 +75,13 @@ export default async function LessonPage({ params }: Props) {
   const data = await getCourseWithContent(courseDecoded);
   if (!data?.course) notFound();
 
-  const course = data.course as unknown as Record<string, unknown> & { id: string; lessons: Record<string, unknown>[]; quizzes?: Array<Record<string, unknown> & { _count?: { questions?: number } }> };
+  const course = data.course as unknown as Record<string, unknown> & { id: string; slug?: string | null; lessons: Record<string, unknown>[]; quizzes?: Array<Record<string, unknown> & { _count?: { questions?: number } }> };
   course.lessons = data.lessons;
+  const role = session?.user?.role;
   course.quizzes = data.quizzes ?? [];
 
-  const isStaff = session?.user?.role === "ADMIN" || session?.user?.role === "ASSISTANT_ADMIN";
-  const isStudent = session?.user?.role === "STUDENT";
+  const isStaff = role === "ADMIN" || role === "ASSISTANT_ADMIN" || role === "TEACHER";
+  const isStudent = role === "STUDENT";
   let isEnrolled = false;
   let allowedLessonIds: string[] = [];
   let hasFullStudentAccess = false;
@@ -96,15 +104,9 @@ export default async function LessonPage({ params }: Props) {
     : data.lessons.find((l: Record<string, unknown>) => l.slug === lessonDecoded);
   if (!lesson) notFound();
 
-  // لو الوصول جزئي فقط (بدون تسجيل كامل أو اشتراك منصة): لا نسمح بفتح إلا الحصص المحددة
-  if (!isStaff && !isEnrolled && !hasFullStudentAccess && allowedLessonIds.length > 0) {
-    const lid = String((lesson as Record<string, unknown>).id ?? "");
-    if (!allowedLessonIds.includes(lid)) notFound();
-  }
-
   const lessonObj = lesson as Record<string, unknown>;
-  const videoUrl = (lessonObj.videoUrl ?? lessonObj.video_url) as string;
-  const youtubeVideoId = getYouTubeVideoId(videoUrl);
+  const lessonId = String(lessonObj.id ?? lesson.id);
+
   const courseAr =
     course.titleAr != null
       ? String(course.titleAr)
@@ -112,7 +114,50 @@ export default async function LessonPage({ params }: Props) {
         ? String(course.title_ar)
         : null;
   const courseEn = course.title != null ? String(course.title) : null;
-  const courseTitle = pickLocalizedText(locale, courseAr, courseEn) || courseEn || courseAr || "";
+  const courseTitle = pickLocalizedText(null, courseAr, courseEn) || courseEn || courseAr || "";
+
+  const lessonDenied =
+    !isStaff &&
+    !isEnrolled &&
+    !hasFullStudentAccess &&
+    allowedLessonIds.length > 0 &&
+    !allowedLessonIds.includes(lessonId);
+
+  if (lessonDenied) {
+    return (
+      <CourseContentAccessDenied
+        title={t("courses.lessonAccessDeniedTitle", "You do not have access to this lesson")}
+        message={t(
+          "courses.lessonAccessDeniedMessage",
+          "The code you redeemed unlocks only specific lessons in this course. To view this lesson, purchase the full course or redeem another code that includes it.",
+        )}
+        courseHref={courseHref(course)}
+        courseTitle={courseTitle}
+        backLabel={t("courses.backToCourse", "Back to")}
+        purchaseCourseLabel={t("courses.purchaseCourseAction", "Purchase course")}
+        activateCodeLabel={t("courses.activateAnotherCode", "Redeem another code")}
+      />
+    );
+  }
+
+  const progression = await resolveCourseProgression(
+    session?.user?.id,
+    role,
+    hasFullStudentAccess,
+    course.id,
+    data.lessons as Record<string, unknown>[],
+    data.quizzes as Record<string, unknown>[],
+  );
+  const progressionRow = findProgressionRowForLesson(progression, lessonId);
+  if (
+    shouldApplySequentialProgression(role, hasFullStudentAccess) &&
+    progressionRow?.locked
+  ) {
+    notFound();
+  }
+
+  const videoUrl = (lessonObj.videoUrl ?? lessonObj.video_url) as string;
+  const youtubeVideoId = getYouTubeVideoId(videoUrl);
   const lessonAr =
     lessonObj.titleAr != null
       ? String(lessonObj.titleAr)
@@ -120,7 +165,7 @@ export default async function LessonPage({ params }: Props) {
         ? String(lessonObj.title_ar)
         : null;
   const lessonEn = lessonObj.title != null ? String(lessonObj.title) : null;
-  const lessonTitle = pickLocalizedText(locale, lessonAr, lessonEn) || lessonEn || lessonAr || "";
+  const lessonTitle = pickLocalizedText(null, lessonAr, lessonEn) || lessonEn || lessonAr || "";
 
   let studentCopyrightCode: string | null = null;
   if (session?.user?.role === "STUDENT" && session.user.id) {
@@ -130,21 +175,33 @@ export default async function LessonPage({ params }: Props) {
   const copyrightOverlayStyle =
     homepageSettings.copyrightOverlayStyle === "watermark" ? "watermark" : "floating";
 
-  const lessonsAll = (course.lessons ?? []) as Array<Record<string, unknown> & { id: string; title?: string; titleAr?: string | null }>;
-  const lessons =
-    !isStaff && !isEnrolled && !hasFullStudentAccess && allowedLessonIds.length > 0
-      ? lessonsAll.filter((l) => allowedLessonIds.includes(String(l.id)))
-      : lessonsAll;
-  const quizzesAll = (course.quizzes ?? []) as Array<Record<string, unknown> & { id: string; title?: string; _count?: { questions?: number } }>;
-  const quizzes =
-    !isStaff && !isEnrolled && !hasFullStudentAccess && allowedLessonIds.length > 0 ? [] : quizzesAll;
-  const items: CourseItem[] = [
-    ...lessons.map((l) => ({ type: "lesson" as const, id: l.id, slug: (l as Record<string, unknown>).slug as string | null, title: String(l.title ?? ""), titleAr: l.titleAr })),
-    ...quizzes.map((q) => ({ type: "quiz" as const, id: q.id, title: String(q.title ?? ""), _count: q._count })),
-  ];
-  const currentIndex = items.findIndex((i) => i.type === "lesson" && i.id === lessonObj.id);
-  const prevItem = currentIndex > 0 ? items[currentIndex - 1] : null;
-  const nextItem = currentIndex >= 0 && currentIndex < items.length - 1 ? items[currentIndex + 1] : null;
+
+  const navItems: NavItem[] = progression.rows.map((row) => {
+    if (row.type === "lesson") {
+      const l = row.lesson as Record<string, unknown> & { id: string; slug?: string | null };
+      return {
+        type: "lesson" as const,
+        id: row.targetId,
+        slug: l.slug ?? null,
+        locked: row.locked,
+      };
+    }
+    return { type: "quiz" as const, id: row.targetId, locked: row.locked };
+  });
+  const currentIndex = navItems.findIndex((i) => i.type === "lesson" && i.id === lessonId);
+  const prevItem = currentIndex > 0 ? navItems[currentIndex - 1] : null;
+  const nextItem =
+    currentIndex >= 0 && currentIndex < navItems.length - 1 ? navItems[currentIndex + 1] : null;
+
+  const lessonCompleted =
+    session?.user?.id && isStudent
+      ? progressionRow?.completed ?? (await isLessonCompleteForUser(session.user.id, lessonId, course.id))
+      : false;
+  const canMarkComplete = isStudent && hasFullStudentAccess && !lessonCompleted;
+
+  const lessonContent = lessonObj.content
+    ? prepareLessonContentForDisplay(String(lessonObj.content))
+    : null;
 
   return (
     <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6">
@@ -160,21 +217,25 @@ export default async function LessonPage({ params }: Props) {
           <h1 className="text-2xl font-bold text-[var(--color-foreground)]">{lessonTitle}</h1>
 
           {youtubeVideoId && (
-            <div className="lesson-video-shell mt-6 relative w-full min-w-0 rounded-[var(--radius-card)] border border-[var(--color-border)] bg-black">
-              <PlyrVideoPlayer
-                key={`${lessonObj.id}-${youtubeVideoId}`}
+            <div className="mt-6">
+              <LessonVideoPlayer
                 youtubeVideoId={youtubeVideoId}
                 storageKey={String(lessonObj.id)}
                 className="w-full"
+                lessonId={lessonId}
+                courseId={course.id}
+                markCompleteOnEnd={canMarkComplete}
+                copyrightOverlay={
+                  studentCopyrightCode?.trim() ? (
+                    <VideoCopyrightOverlay
+                      code={studentCopyrightCode.trim()}
+                      label={t("video.copyrightCode", "Copyright code")}
+                      dir="rtl"
+                      style={copyrightOverlayStyle}
+                    />
+                  ) : undefined
+                }
               />
-              {studentCopyrightCode?.trim() ? (
-                <VideoCopyrightOverlay
-                  code={studentCopyrightCode.trim()}
-                  label={t("video.copyrightCode", "Copyright code")}
-                  dir={locale === "ar" ? "rtl" : "ltr"}
-                  style={copyrightOverlayStyle}
-                />
-              ) : null}
             </div>
           )}
 
@@ -191,11 +252,15 @@ export default async function LessonPage({ params }: Props) {
             </div>
           ) : null}
 
-          {lessonObj.content ? (
+          {lessonContent?.value ? (
             <div className="mt-6 rounded-[var(--radius-card)] border border-[var(--color-border)] bg-[var(--color-surface)] p-6 prose-custom text-[var(--color-foreground)]">
-              {String(lessonObj.content).split("\n").map((p, i) => (
-                <p key={i}>{p}</p>
-              ))}
+              {lessonContent.mode === "html" ? (
+                <div dangerouslySetInnerHTML={{ __html: lessonContent.value }} />
+              ) : (
+                lessonContent.value.split("\n").map((paragraph, i) =>
+                  paragraph.trim() ? <p key={i}>{paragraph}</p> : null,
+                )
+              )}
             </div>
           ) : null}
 
@@ -205,9 +270,17 @@ export default async function LessonPage({ params }: Props) {
 
           {isStudent ? <LessonRatingSection lessonId={String(lessonObj.id)} /> : null}
 
+          {isStudent && hasFullStudentAccess ? (
+            <LessonCompleteButton
+              lessonId={lessonId}
+              courseId={course.id}
+              initialCompleted={lessonCompleted}
+            />
+          ) : null}
+
           {/* أزرار السابق والتالي أسفل الحصة */}
           <nav className="mt-8 flex w-full items-center justify-between gap-4 border-t border-[var(--color-border)] pt-6">
-            {prevItem ? (
+            {prevItem && !prevItem.locked ? (
               <Link
                 href={prevItem.type === "lesson" ? lessonHref(course, { id: prevItem.id, slug: prevItem.slug ?? undefined }) : quizHref(course, prevItem.id)}
                 className="rounded-[var(--radius-btn)] border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-3 text-sm font-medium transition hover:border-[var(--color-primary)]/40 hover:bg-[var(--color-background)]"
@@ -219,7 +292,7 @@ export default async function LessonPage({ params }: Props) {
             ) : (
               <span />
             )}
-            {nextItem ? (
+            {nextItem && !nextItem.locked ? (
               <Link
                 href={nextItem.type === "lesson" ? lessonHref(course, { id: nextItem.id, slug: nextItem.slug ?? undefined }) : quizHref(course, nextItem.id)}
                 className="rounded-[var(--radius-btn)] bg-[var(--color-primary)] px-4 py-3 text-sm font-medium text-white transition hover:bg-[var(--color-primary-hover)]"
@@ -235,10 +308,10 @@ export default async function LessonPage({ params }: Props) {
         {/* قائمة الكورس — العمود الضيق على الجانب */}
         <aside className="order-first lg:col-start-2 lg:row-start-1 lg:order-none">
           <CourseOutlineSidebar
-            course={course}
-            lessons={lessons}
-            quizzes={quizzes}
-            currentLessonId={lessonObj.id as string}
+            course={{ id: course.id, slug: course.slug as string | null | undefined }}
+            rows={progression.rows}
+            canAccess
+            currentLessonId={lessonId}
             currentQuizId={null}
           />
         </aside>

@@ -1,16 +1,16 @@
 import Link from "next/link";
 import type { Session } from "next-auth";
 import {
-  getCategories,
-  getCoursesPublished,
-  getReviews,
-  listActiveSubscriptionPlansPublic,
-  listStoreProductsPublic,
-  listTeachersForHomepage,
-  selectTeachersForHomepagePreview,
-  userHasActivePlatformSubscription,
-  getLatestPlatformSubscriptionExpiry,
+  listActivePlatformSubscriptionsForUser,
 } from "@/lib/db";
+import {
+  getCategoriesCached,
+  getCoursesPublishedCached,
+  getReviewsCached,
+  listActiveSubscriptionPlansPublicCached,
+  listStoreProductsPublicCached,
+  listTeachersForHomepageCached,
+} from "@/lib/public-data-cache";
 import type { HomepageSetting } from "@/lib/types";
 import { CourseCard } from "@/components/CourseCard";
 import { HomeTeachersSection } from "@/components/HomeTeachersSection";
@@ -20,7 +20,7 @@ import { HomePlatformDetailsSection } from "@/components/HomePlatformDetailsSect
 import { parsePlatformDetailsItems } from "@/lib/platform-details";
 import { parsePlatformNewsItems } from "@/lib/platform-news";
 import { HomePlatformNewsSlider } from "@/components/HomePlatformNewsSlider";
-import { getLocaleFromCookie, getServerTranslator } from "@/lib/i18n/server";
+import { getServerTranslator } from "@/lib/i18n/server";
 import {
   HOMEPAGE_DEFAULT_CTA_BADGE_AR,
   HOMEPAGE_DEFAULT_CTA_BUTTON_AR,
@@ -36,10 +36,11 @@ import {
   HOMEPAGE_DEFAULT_STORE_SECTION_DESCRIPTION_AR,
   HOMEPAGE_DEFAULT_STORE_SECTION_TITLE_AR,
 } from "@/lib/homepage-known-defaults";
-import { homepageDefaultForLocale } from "@/lib/homepage-default-for-locale";
-import { pickLocalizedText } from "@/lib/i18n/localized-field";
+import { pickLocalizedText, settingTextOrDefault } from "@/lib/i18n/localized-field";
+import { selectTeachersForHomepagePreview } from "@/lib/db";
+import { courseIsHiddenFromPublicTeacherCatalog } from "@/lib/permissions";
 
-type CourseWithCategory = Awaited<ReturnType<typeof getCoursesPublished>>[number];
+type CourseWithCategory = Awaited<ReturnType<typeof getCoursesPublishedCached>>[number];
 
 export async function HomePageBelowFold({
   homepageSettings,
@@ -48,81 +49,77 @@ export async function HomePageBelowFold({
   homepageSettings: HomepageSetting;
   session: Session | null;
 }) {
-  const [t, locale] = await Promise.all([getServerTranslator(), getLocaleFromCookie()]);
+  const t = await getServerTranslator();
   let courses: CourseWithCategory[] = [];
-  let categories: Awaited<ReturnType<typeof getCategories>> = [];
-  let reviews: Awaited<ReturnType<typeof getReviews>> = [];
-  let teachersForHome: Awaited<ReturnType<typeof listTeachersForHomepage>> = [];
-  let subscriptionPlansHome: Awaited<ReturnType<typeof listActiveSubscriptionPlansPublic>> = [];
-  let storeProductsHome: Awaited<ReturnType<typeof listStoreProductsPublic>> = [];
+  let categories: Awaited<ReturnType<typeof getCategoriesCached>> = [];
+  let reviews: Awaited<ReturnType<typeof getReviewsCached>> = [];
+  let teachersForHome: Awaited<ReturnType<typeof listTeachersForHomepageCached>> = [];
+  let subscriptionPlansHome: Awaited<ReturnType<typeof listActiveSubscriptionPlansPublicCached>> = [];
+  let storeProductsHome: Awaited<ReturnType<typeof listStoreProductsPublicCached>> = [];
 
-  if (homepageSettings.teachersEnabled) {
-    try {
-      teachersForHome = await listTeachersForHomepage();
-    } catch {
-      /* جدول أو أعمدة غير جاهزة */
-    }
-  }
-  if (homepageSettings.subscriptionsEnabled) {
-    try {
-      subscriptionPlansHome = await listActiveSubscriptionPlansPublic();
-    } catch {
-      /* جداول الاشتراك غير جاهزة */
-    }
-  }
-  if (homepageSettings.storeEnabled) {
-    try {
-      storeProductsHome = await listStoreProductsPublic();
-    } catch {
-      /* جداول المتجر غير جاهزة */
-    }
-  }
-
-  let studentPlatformSubscription: { active: boolean; expiresAtIso: string | null } | null = null;
-  if (
+  const needsStudentSubscription =
     homepageSettings.subscriptionsEnabled &&
     session?.user?.role === "STUDENT" &&
-    session.user.id
-  ) {
-    try {
-      const active = await userHasActivePlatformSubscription(session.user.id);
-      const exp = active ? await getLatestPlatformSubscriptionExpiry(session.user.id) : null;
-      studentPlatformSubscription = {
-        active,
-        expiresAtIso: exp ? exp.toISOString() : null,
-      };
-    } catch {
-      studentPlatformSubscription = { active: false, expiresAtIso: null };
-    }
-  }
+    !!session.user.id;
 
-  try {
-    [courses, categories] = await Promise.all([getCoursesPublished(true), getCategories()]);
-  } catch {
-    // لا قاعدة بيانات أو غير متصلة
-  }
+  const [
+    teachersResult,
+    subscriptionPlansResult,
+    storeProductsResult,
+    catalogResult,
+    reviewsResult,
+    studentSubscriptionResult,
+  ] = await Promise.all([
+    homepageSettings.teachersEnabled
+      ? listTeachersForHomepageCached().catch(() => [] as Awaited<ReturnType<typeof listTeachersForHomepageCached>>)
+      : Promise.resolve([] as Awaited<ReturnType<typeof listTeachersForHomepageCached>>),
+    homepageSettings.subscriptionsEnabled
+      ? listActiveSubscriptionPlansPublicCached().catch(
+          () => [] as Awaited<ReturnType<typeof listActiveSubscriptionPlansPublicCached>>,
+        )
+      : Promise.resolve([] as Awaited<ReturnType<typeof listActiveSubscriptionPlansPublicCached>>),
+    homepageSettings.storeEnabled
+      ? listStoreProductsPublicCached().catch(
+          () => [] as Awaited<ReturnType<typeof listStoreProductsPublicCached>>,
+        )
+      : Promise.resolve([] as Awaited<ReturnType<typeof listStoreProductsPublicCached>>),
+    Promise.all([getCoursesPublishedCached(true), getCategoriesCached()]).catch(
+      () => [[], []] as [CourseWithCategory[], Awaited<ReturnType<typeof getCategoriesCached>>],
+    ),
+    getReviewsCached().catch(() => [] as Awaited<ReturnType<typeof getReviewsCached>>),
+    needsStudentSubscription && session?.user?.id
+      ? (async () => {
+          try {
+            const subs = await listActivePlatformSubscriptionsForUser(session.user!.id!);
+            return subs.map((sub) => ({
+              categoryId: sub.categoryId,
+              expiresAtIso: sub.expiresAt.toISOString(),
+            }));
+          } catch {
+            return [];
+          }
+        })()
+      : Promise.resolve([] as Array<{ categoryId: string | null; expiresAtIso: string }>),
+  ]);
+
+  teachersForHome = teachersResult;
+  subscriptionPlansHome = subscriptionPlansResult;
+  storeProductsHome = storeProductsResult;
+  [courses, categories] = catalogResult;
+  reviews = reviewsResult;
+  const studentActiveSubscriptions = studentSubscriptionResult;
 
   if (homepageSettings.teachersEnabled && teachersForHome.length > 0) {
     const teacherAccountIds = new Set(teachersForHome.map((t) => t.id));
-    courses = courses.filter((c) => {
-      const creator =
-        (c as { createdById?: string | null }).createdById ??
-        (c as { created_by_id?: string | null }).created_by_id ??
-        null;
-      return !creator || !teacherAccountIds.has(creator);
-    });
-  }
-
-  try {
-    reviews = await getReviews();
-  } catch {
-    /* جدول التعليقات غير موجود */
+    courses = courses.filter(
+      (c) => !courseIsHiddenFromPublicTeacherCatalog(c, teacherAccountIds),
+    );
   }
 
   const platformNewsSlides = parsePlatformNewsItems(homepageSettings.platformNewsItems);
   const localizedPlatformNewsSlides = platformNewsSlides.map((item) => ({
     ...item,
-    description: pickLocalizedText(locale, item.description, item.descriptionEn),
+    description: pickLocalizedText(null, item.description, item.descriptionEn),
   }));
   const showPlatformNewsSection =
     Boolean(homepageSettings.platformNewsEnabled) && localizedPlatformNewsSlides.length > 0;
@@ -152,7 +149,7 @@ export async function HomePageBelowFold({
     const list = categoryIdToCourses.get(cat.id);
     if (list?.length) {
       sections.push({
-        title: pickLocalizedText(locale, (cat as { nameAr?: string | null }).nameAr, cat.name),
+        title: pickLocalizedText(null, (cat as { nameAr?: string | null }).nameAr, cat.name),
         slug: cat.slug,
         courses: list,
       });
@@ -165,126 +162,97 @@ export async function HomePageBelowFold({
   const platformDetailsItems = parsePlatformDetailsItems(homepageSettings.platformDetailsItems);
   const localizedPlatformDetailsItems = platformDetailsItems.map((item) => ({
     ...item,
-    title: pickLocalizedText(locale, item.title, item.titleEn),
-    description: pickLocalizedText(locale, item.description, item.descriptionEn),
+    title: pickLocalizedText(null, item.title, item.titleEn),
+    description: pickLocalizedText(null, item.description, item.descriptionEn),
   }));
 
-  const rawReviewsTitle = pickLocalizedText(
-    locale,
+  const rawReviewsTitle = pickLocalizedText(null,
     homepageSettings.reviewsSectionTitle,
     homepageSettings.reviewsSectionTitleEn,
   );
-  const rawReviewsSubtitle = pickLocalizedText(
-    locale,
+  const rawReviewsSubtitle = pickLocalizedText(null,
     homepageSettings.reviewsSectionSubtitle,
     homepageSettings.reviewsSectionSubtitleEn,
   );
   const reviewsTitle =
-    locale === "en" &&
-    (rawReviewsTitle === HOMEPAGE_DEFAULT_REVIEWS_SECTION_TITLE_AR || rawReviewsTitle === "")
-      ? t("home.reviewsTitleDefault", "What students say")
-      : rawReviewsTitle || t("home.reviewsTitleDefault", "What students say");
+    rawReviewsTitle || t("home.reviewsTitleDefault", "What students say");
   const reviewsSubtitle =
-    locale === "en" &&
-    (rawReviewsSubtitle === HOMEPAGE_DEFAULT_REVIEWS_SECTION_SUBTITLE_AR || rawReviewsSubtitle === "")
-      ? t("home.reviewsSubtitleDefault", "Real experiences from platform students")
-      : rawReviewsSubtitle || t("home.reviewsSubtitleDefault", "Real experiences from platform students");
+    rawReviewsSubtitle || t("home.reviewsSubtitleDefault", "Real experiences from platform students");
 
-  const rawCtaBadge = pickLocalizedText(
-    locale,
+  const rawCtaBadge = pickLocalizedText(null,
     homepageSettings.ctaBadgeText,
     homepageSettings.ctaBadgeTextEn,
   );
-  const rawCtaTitle = pickLocalizedText(locale, homepageSettings.ctaTitle, homepageSettings.ctaTitleEn);
-  const rawCtaDescription = pickLocalizedText(
-    locale,
+  const rawCtaTitle = pickLocalizedText(null, homepageSettings.ctaTitle, homepageSettings.ctaTitleEn);
+  const rawCtaDescription = pickLocalizedText(null,
     homepageSettings.ctaDescription,
     homepageSettings.ctaDescriptionEn,
   );
-  const rawCtaButton = pickLocalizedText(
-    locale,
+  const rawCtaButton = pickLocalizedText(null,
     homepageSettings.ctaButtonText,
     homepageSettings.ctaButtonTextEn,
   );
-  const platformDetailsTitle = homepageDefaultForLocale(
-    locale,
-    pickLocalizedText(locale, homepageSettings.platformDetailsTitle, homepageSettings.platformDetailsTitleEn),
-    HOMEPAGE_DEFAULT_PLATFORM_DETAILS_TITLE_AR,
+  const platformDetailsTitle = settingTextOrDefault(
+    pickLocalizedText(null, homepageSettings.platformDetailsTitle, homepageSettings.platformDetailsTitleEn),
+    t,
     "home.platformDetailsDefaultTitle",
-    t,
-    "Qalam, the ideal solution!",
+    HOMEPAGE_DEFAULT_PLATFORM_DETAILS_TITLE_AR,
   );
-  const platformDetailsSubtitle = homepageDefaultForLocale(
-    locale,
-    pickLocalizedText(locale, homepageSettings.platformDetailsSubtitle, homepageSettings.platformDetailsSubtitleEn),
-    HOMEPAGE_DEFAULT_PLATFORM_DETAILS_SUBTITLE_AR,
+  const platformDetailsSubtitle = settingTextOrDefault(
+    pickLocalizedText(null, homepageSettings.platformDetailsSubtitle, homepageSettings.platformDetailsSubtitleEn),
+    t,
     "home.platformDetailsDefaultSubtitle",
-    t,
-    "Discover what makes the platform stand out",
+    HOMEPAGE_DEFAULT_PLATFORM_DETAILS_SUBTITLE_AR,
   );
-  const storeSectionTitle = homepageDefaultForLocale(
-    locale,
-    pickLocalizedText(locale, homepageSettings.storeSectionTitle, homepageSettings.storeSectionTitleEn),
-    HOMEPAGE_DEFAULT_STORE_SECTION_TITLE_AR,
+  const storeSectionTitle = settingTextOrDefault(
+    pickLocalizedText(null, homepageSettings.storeSectionTitle, homepageSettings.storeSectionTitleEn),
+    t,
     "home.storeSectionDefaultTitle",
-    t,
-    "Platform Store",
+    HOMEPAGE_DEFAULT_STORE_SECTION_TITLE_AR,
   );
-  const storeSectionDescription = homepageDefaultForLocale(
-    locale,
+  const storeSectionDescription = settingTextOrDefault(
     pickLocalizedText(
-      locale,
+      null,
       homepageSettings.storeSectionDescription,
       homepageSettings.storeSectionDescriptionEn,
     ),
-    HOMEPAGE_DEFAULT_STORE_SECTION_DESCRIPTION_AR,
-    "home.storeSectionDefaultDescription",
     t,
-    "Welcome to the platform store with essential study materials and books. Choose what suits your needs and benefit from organized digital content that supports your learning journey.",
+    "home.storeSectionDefaultDescription",
+    HOMEPAGE_DEFAULT_STORE_SECTION_DESCRIPTION_AR,
   );
-  const platformNewsTitle = homepageDefaultForLocale(
-    locale,
+  const platformNewsTitle = settingTextOrDefault(
     pickLocalizedText(
-      locale,
+      null,
       homepageSettings.platformNewsSectionTitle,
       homepageSettings.platformNewsSectionTitleEn,
     ),
-    HOMEPAGE_DEFAULT_PLATFORM_NEWS_TITLE_AR,
+    t,
     "home.platformNewsDefaultTitle",
-    t,
-    "Platform News",
+    HOMEPAGE_DEFAULT_PLATFORM_NEWS_TITLE_AR,
   );
-  const ctaBadge = homepageDefaultForLocale(
-    locale,
+  const ctaBadge = settingTextOrDefault(
     rawCtaBadge,
-    HOMEPAGE_DEFAULT_CTA_BADGE_AR,
+    t,
     "home.ctaBadgeDefault",
-    t,
-    "A stronger start to learning",
+    HOMEPAGE_DEFAULT_CTA_BADGE_AR,
   );
-  const ctaTitle = homepageDefaultForLocale(
-    locale,
+  const ctaTitle = settingTextOrDefault(
     rawCtaTitle,
-    HOMEPAGE_DEFAULT_CTA_TITLE_AR,
+    t,
     "home.ctaTitleDefault",
-    t,
-    "Ready to turn your dream into a real result?",
+    HOMEPAGE_DEFAULT_CTA_TITLE_AR,
   );
-  const ctaDescription = homepageDefaultForLocale(
-    locale,
+  const ctaDescription = settingTextOrDefault(
     rawCtaDescription,
-    HOMEPAGE_DEFAULT_CTA_DESCRIPTION_AR,
+    t,
     "home.ctaDescriptionDefault",
-    t,
-    "Start now with a confident step: organized content, clear explanations, and practical exercises that help you retain what you learn faster. Every lesson you complete today brings you closer to the level you deserve tomorrow.",
+    HOMEPAGE_DEFAULT_CTA_DESCRIPTION_AR,
   );
-  const ctaButton = homepageDefaultForLocale(
-    locale,
+  const ctaButton = settingTextOrDefault(
     rawCtaButton,
-    HOMEPAGE_DEFAULT_CTA_BUTTON_AR,
-    "home.ctaButtonDefault",
     t,
-    "Start your journey now",
+    "home.ctaButtonDefault",
+    HOMEPAGE_DEFAULT_CTA_BUTTON_AR,
   );
 
   return (
@@ -312,7 +280,7 @@ export async function HomePageBelowFold({
           plans={subscriptionPlansHome}
           isStudent={session?.user?.role === "STUDENT"}
           isLoggedIn={!!session}
-          studentPlatformSubscription={studentPlatformSubscription}
+          studentActiveSubscriptions={studentActiveSubscriptions}
         />
       ) : null}
 
@@ -375,8 +343,8 @@ export async function HomePageBelowFold({
               {reviews.map((r) => {
                 const letter =
                   (r.avatarLetter && r.avatarLetter.trim()) || (r.authorName.trim()[0] ?? "؟");
-                const reviewText = pickLocalizedText(locale, r.text, r.textEn);
-                const reviewAuthorTitle = pickLocalizedText(locale, r.authorTitle, r.authorTitleEn);
+                const reviewText = pickLocalizedText(null, r.text, r.textEn);
+                const reviewAuthorTitle = pickLocalizedText(null, r.authorTitle, r.authorTitleEn);
                 return (
                   <div
                     key={r.id}
@@ -497,21 +465,17 @@ export async function HomePageBelowFold({
           "pointer-events-none hidden select-none rounded-full bg-black/50 px-3 py-1 text-xs font-semibold tracking-wide text-white/95 shadow-sm md:inline-flex md:translate-x-0 md:opacity-100 group-hover:inline-flex group-hover:opacity-100 group-focus-visible:inline-flex";
 
         const verticalPositions = ["bottom-6", "bottom-24", "bottom-42", "bottom-60", "bottom-78"] as const;
-        const rightLabelWord = homepageDefaultForLocale(
-          locale,
-          pickLocalizedText(locale, homepageSettings.socialRightLabel, homepageSettings.socialRightLabelEn),
-          HOMEPAGE_DEFAULT_SOCIAL_RIGHT_LABEL_AR,
+        const rightLabelWord = settingTextOrDefault(
+          pickLocalizedText(null, homepageSettings.socialRightLabel, homepageSettings.socialRightLabelEn),
+          t,
           "home.socialRightDefaultLabel",
-          t,
-          "Support",
+          HOMEPAGE_DEFAULT_SOCIAL_RIGHT_LABEL_AR,
         );
-        const leftLabelWord = homepageDefaultForLocale(
-          locale,
-          pickLocalizedText(locale, homepageSettings.socialLeftLabel, homepageSettings.socialLeftLabelEn),
-          HOMEPAGE_DEFAULT_SOCIAL_LEFT_LABEL_AR,
-          "home.socialLeftDefaultLabel",
+        const leftLabelWord = settingTextOrDefault(
+          pickLocalizedText(null, homepageSettings.socialLeftLabel, homepageSettings.socialLeftLabelEn),
           t,
-          "Team support",
+          "home.socialLeftDefaultLabel",
+          HOMEPAGE_DEFAULT_SOCIAL_LEFT_LABEL_AR,
         );
         const leftEnabled = homepageSettings.socialLeftEnabled !== false;
 

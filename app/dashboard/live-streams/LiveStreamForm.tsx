@@ -1,10 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { useT } from "@/components/LocaleProvider";
-import { DateTimeLocalInput } from "@/components/DateTimeLocalInput";
-import { dateTimeLocalToIso, toDateTimeLocalValue } from "@/lib/datetime-local";
 
 type CourseOption = { id: string; title: string };
 
@@ -41,29 +39,15 @@ export function LiveStreamForm({ courseOptions, initialData }: Props) {
     meetingUrl: initialData?.meetingUrl ?? "",
     meetingId: initialData?.meetingId ?? "",
     meetingPassword: initialData?.meetingPassword ?? "",
-    scheduledAt: "",
+    scheduledAt: initialData?.scheduledAt ?? "",
     description: initialData?.description ?? "",
     order: initialData?.order ?? 0,
   });
-
-  useEffect(() => {
-    if (initialData?.scheduledAt) {
-      setForm((f) => ({
-        ...f,
-        scheduledAt: toDateTimeLocalValue(initialData.scheduledAt),
-      }));
-    }
-  }, [initialData?.scheduledAt]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
     if (!form.courseId || !form.title.trim() || !form.meetingUrl.trim() || !form.scheduledAt) {
-      setError(t(`${F}.validationRequired`));
-      return;
-    }
-    const scheduledAtIso = dateTimeLocalToIso(form.scheduledAt);
-    if (!scheduledAtIso) {
       setError(t(`${F}.validationRequired`));
       return;
     }
@@ -81,7 +65,7 @@ export function LiveStreamForm({ courseOptions, initialData }: Props) {
             meetingUrl: form.meetingUrl.trim(),
             meetingId: form.meetingId.trim() || null,
             meetingPassword: form.meetingPassword.trim() || null,
-            scheduledAt: scheduledAtIso,
+            scheduledAt: form.scheduledAt,
             description: form.description.trim() || null,
             order: form.order,
           }),
@@ -104,7 +88,7 @@ export function LiveStreamForm({ courseOptions, initialData }: Props) {
             meetingUrl: form.meetingUrl.trim(),
             meetingId: form.meetingId.trim() || null,
             meetingPassword: form.meetingPassword.trim() || null,
-            scheduledAt: scheduledAtIso,
+            scheduledAt: form.scheduledAt,
             description: form.description.trim() || null,
             order: form.order,
           }),
@@ -209,9 +193,11 @@ export function LiveStreamForm({ courseOptions, initialData }: Props) {
       </div>
       <div>
         <label className="mb-1 block text-sm font-medium text-[var(--color-foreground)]">{t(`${F}.labelScheduledAt`)}</label>
-        <DateTimeLocalInput
+        <input
+          type="datetime-local"
           value={form.scheduledAt}
-          onChange={(scheduledAt) => setForm((f) => ({ ...f, scheduledAt }))}
+          onChange={(e) => setForm((f) => ({ ...f, scheduledAt: e.target.value }))}
+          className="w-full rounded-[var(--radius-btn)] border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm"
           required
         />
       </div>

@@ -77,22 +77,6 @@ body {
   min-height: 100vh;
 }
 
-/* Date/time inputs — hide native indicator; themed icons are rendered in the component */
-.datetime-input-themed {
-  accent-color: var(--color-primary);
-  color-scheme: light dark;
-}
-
-.datetime-input-themed::-webkit-calendar-picker-indicator {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  margin: 0;
-  opacity: 0;
-  cursor: pointer;
-}
-
 /* في الوضع الساطع: تدرج أزرق خفيف جداً حتى منتصف الشاشة */
 html.light body {
   background: linear-gradient(
@@ -338,6 +322,7 @@ html.dark .hero-wave-fill {
 
 .hero-image-frame-inner {
   border-radius: 30px;
+  object-position: center 20%;
 }
 
 @property --hero-frame-angle {

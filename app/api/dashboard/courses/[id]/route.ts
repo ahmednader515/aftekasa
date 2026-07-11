@@ -1,28 +1,35 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
-import { canManageCourse } from "@/lib/permissions";
+import { canManageCourse, readCourseManageIds } from "@/lib/permissions";
 import {
   getCourseById,
   getCourseForEdit,
   updateCourse,
   deleteCourse,
-  deleteLessonsByCourseId,
-  deleteQuizzesByCourseId,
-  createLesson,
-  createQuiz,
-  createQuestion,
-  createQuestionOption,
   findCategoryByNameForDashboard,
   createCategory,
   categoryIsManageableOnDashboard,
+  assertAssignableTeacher,
 } from "@/lib/db";
+import { syncCourseLessons } from "@/lib/save-course-lessons";
+import {
+  saveCourseQuizzes,
+  type CourseContentOrderEntry,
+  type CourseQuizInput,
+} from "@/lib/save-course-quizzes";
+import { revalidatePublicCache, PUBLIC_CACHE_TAGS } from "@/lib/public-data-cache";
 
-type LessonInput = { title: string; titleAr?: string; videoUrl?: string; content?: string; pdfUrl?: string; acceptsHomework?: boolean };
-type QuestionOptionInput = { text: string; isCorrect: boolean };
-type QuestionInput = { type: "MULTIPLE_CHOICE" | "ESSAY" | "TRUE_FALSE"; questionText: string; options?: QuestionOptionInput[] };
-type QuizInput = { title: string; timeLimitMinutes?: number | null; questions: QuestionInput[] };
-type ContentOrderEntry = { type: "lesson"; index: number } | { type: "quiz"; index: number };
+type LessonInput = {
+  id?: string;
+  title: string;
+  titleAr?: string;
+  videoUrl?: string;
+  content?: string;
+  pdfUrl?: string;
+  acceptsHomework?: boolean;
+};
+type ContentOrderEntry = CourseContentOrderEntry;
 
 /** تحديث دورة - للأدمن ومساعد الأدمن */
 export async function PUT(
@@ -54,8 +61,9 @@ export async function PUT(
     categoryNameAr?: string;
     categoryNameEn?: string;
     acceptsHomework?: boolean;
+    teacherId?: string;
     lessons?: LessonInput[];
-    quizzes?: QuizInput[];
+    quizzes?: CourseQuizInput[];
     contentOrder?: ContentOrderEntry[];
   };
   try {
@@ -69,17 +77,21 @@ export async function PUT(
     return NextResponse.json({ error: "الدورة غير موجودة" }, { status: 404 });
   }
   const createdBy = (course as { createdById?: string | null; created_by_id?: string | null }).createdById ?? (course as { created_by_id?: string | null }).created_by_id ?? null;
-  if (!canManageCourse(session.user.role, session.user.id, createdBy)) {
+  const assignedTeacherId =
+    (course as { assignedTeacherId?: string | null; assigned_teacher_id?: string | null }).assignedTeacherId ??
+    (course as { assigned_teacher_id?: string | null }).assigned_teacher_id ??
+    null;
+  if (!canManageCourse(session.user.role, session.user.id, createdBy, assignedTeacherId)) {
     return NextResponse.json({ error: "غير مصرح" }, { status: 403 });
   }
   const slug = (course as { slug?: string }).slug ?? "";
 
   const titleAr = (body.titleAr ?? body.title)?.trim();
-  const titleEn = (body.titleEn ?? body.title)?.trim();
+  const titleEn = (body.titleEn ?? titleAr)?.trim();
   const descriptionAr = (body.descriptionAr ?? body.description)?.trim();
-  const descriptionEn = (body.descriptionEn ?? "").trim();
-  if (!titleAr || !titleEn || !descriptionAr || !descriptionEn) {
-    return NextResponse.json({ error: "العنوان والوصف بالعربية والإنجليزية مطلوبان" }, { status: 400 });
+  const descriptionEn = (body.descriptionEn ?? descriptionAr)?.trim();
+  if (!titleAr || !descriptionAr) {
+    return NextResponse.json({ error: "العنوان والوصف بالعربية مطلوبان" }, { status: 400 });
   }
 
   const role = session.user.role;
@@ -90,7 +102,7 @@ export async function PUT(
 
   let categoryId: string | null | undefined = body.categoryId;
   const catNameAr = (body.categoryNameAr ?? body.categoryName)?.trim();
-  const catNameEn = (body.categoryNameEn ?? body.categoryName)?.trim();
+  const catNameEn = (body.categoryNameEn ?? catNameAr)?.trim();
   if (catNameAr || catNameEn) {
     let cat =
       (catNameAr ? await findCategoryByNameForDashboard(catNameAr, session.user.id, role) : null) ??
@@ -122,84 +134,61 @@ export async function PUT(
     }
   }
 
+  let assignedTeacherUpdate: string | undefined;
+  let createdByRestore: string | undefined;
+  if (session.user.role === "ADMIN" && body.teacherId?.trim()) {
+    try {
+      await assertAssignableTeacher(body.teacherId.trim());
+      assignedTeacherUpdate = body.teacherId.trim();
+      createdByRestore = session.user.id;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "المدرس المحدد غير صالح";
+      return NextResponse.json({ error: msg }, { status: 400 });
+    }
+  }
+
   await updateCourse(id, {
-    title: titleEn,
+    title: titleEn || titleAr,
     title_ar: titleAr,
     description: descriptionAr,
     description_en: descriptionEn,
     short_desc: (body.shortDescAr ?? body.shortDesc)?.trim() || null,
-    short_desc_en: (body.shortDescEn ?? "").trim() || null,
+    short_desc_en: (body.shortDescEn ?? body.shortDescAr ?? body.shortDesc)?.trim() || null,
     image_url: body.imageUrl?.trim() || null,
     price: body.price ?? 0,
     is_published: body.isPublished ?? true,
-    max_quiz_attempts: body.maxQuizAttempts ?? null,
+    max_quiz_attempts: null,
     ...(categoryId !== undefined && { category_id: categoryId }),
     ...(body.acceptsHomework !== undefined && { accepts_homework: body.acceptsHomework }),
+    ...(assignedTeacherUpdate !== undefined && { assigned_teacher_id: assignedTeacherUpdate }),
+    ...(createdByRestore !== undefined && { created_by_id: createdByRestore }),
   });
 
-  await deleteLessonsByCourseId(id);
   const lessons = body.lessons ?? [];
   const quizzes = body.quizzes ?? [];
-  const contentOrder =
+  const contentOrder: ContentOrderEntry[] =
     body.contentOrder ??
     ([
       ...lessons.map((_, i) => ({ type: "lesson" as const, index: i })),
       ...quizzes.map((_, i) => ({ type: "quiz" as const, index: i })),
     ] satisfies ContentOrderEntry[]);
 
-  for (let i = 0; i < lessons.length; i++) {
-    const le = lessons[i];
-    const lessonSlug = `${slug}-${i + 1}`.replace(/\s+/g, "-");
-    const order = contentOrder.findIndex((e) => e.type === "lesson" && e.index === i);
-    const orderVal = order >= 0 ? order : i;
-    await createLesson({
-      course_id: id,
-      title: le.title?.trim() || `حصة ${i + 1}`,
-      title_ar: le.titleAr?.trim() || null,
-      slug: lessonSlug,
-      content: le.content?.trim() || null,
-      video_url: le.videoUrl?.trim() || null,
-      pdf_url: le.pdfUrl?.trim() || null,
-      order: orderVal,
-      accepts_homework: !!le.acceptsHomework,
-    });
-  }
+  await syncCourseLessons({
+    courseId: id,
+    courseSlug: slug,
+    lessons,
+    contentOrder,
+  });
 
-  await deleteQuizzesByCourseId(id);
-  for (let qi = 0; qi < quizzes.length; qi++) {
-    const q = quizzes[qi];
-    const mins = q.timeLimitMinutes;
-    const timeLimitMinutes =
-      typeof mins === "number" && Number.isFinite(mins) && mins >= 1 ? mins : null;
-    const order = contentOrder.findIndex((e) => e.type === "quiz" && e.index === qi);
-    const orderVal = order >= 0 ? order : lessons.length + qi;
-    const quiz = await createQuiz({
-      course_id: id,
-      title: q.title?.trim() || `اختبار ${qi + 1}`,
-      order: orderVal,
-      time_limit_minutes: timeLimitMinutes,
-    });
-    const questions = q.questions ?? [];
-    for (let qti = 0; qti < questions.length; qti++) {
-      const qt = questions[qti];
-      const qType = qt.type === "ESSAY" ? "ESSAY" : qt.type === "TRUE_FALSE" ? "TRUE_FALSE" : "MULTIPLE_CHOICE";
-      const question = await createQuestion({
-        quiz_id: quiz.id,
-        type: qType,
-        question_text: qt.questionText?.trim() || "",
-        order: qti + 1,
-      });
-      if ((qt.type === "MULTIPLE_CHOICE" || qt.type === "TRUE_FALSE") && Array.isArray(qt.options)) {
-        for (const opt of qt.options) {
-          await createQuestionOption({
-            question_id: question.id,
-            text: opt.text?.trim() || "",
-            is_correct: !!opt.isCorrect,
-          });
-        }
-      }
-    }
-  }
+  await saveCourseQuizzes({
+    courseId: id,
+    lessonsCount: lessons.length,
+    quizzes,
+    contentOrder,
+    replaceOwned: true,
+  });
+
+  revalidatePublicCache(PUBLIC_CACHE_TAGS.courses);
 
   return NextResponse.json({ success: true });
 }
@@ -219,9 +208,14 @@ export async function GET(
   if (!data?.course) {
     return NextResponse.json({ error: "الدورة غير موجودة" }, { status: 404 });
   }
-  const c0 = data.course as { createdById?: string | null; created_by_id?: string | null };
-  const createdBy = c0.createdById ?? c0.created_by_id ?? null;
-  if (!canManageCourse(session.user.role, session.user.id, createdBy)) {
+  const c0 = data.course as {
+    createdById?: string | null;
+    created_by_id?: string | null;
+    assignedTeacherId?: string | null;
+    assigned_teacher_id?: string | null;
+  };
+  const { createdById: createdBy, assignedTeacherId } = readCourseManageIds(c0);
+  if (!canManageCourse(session.user.role, session.user.id, createdBy, assignedTeacherId)) {
     return NextResponse.json({ error: "غير مصرح" }, { status: 403 });
   }
 
@@ -243,7 +237,9 @@ export async function GET(
     isPublished: c.isPublished ?? c.is_published ?? true,
     maxQuizAttempts: c.maxQuizAttempts ?? c.max_quiz_attempts ?? null,
     categoryId: (c as { categoryId?: string | null }).categoryId ?? null,
+    teacherId: assignedTeacherId ?? createdBy,
     lessons: data.lessons.map((l) => ({
+      id: String((l as { id?: string }).id ?? ""),
       title: l.title,
       titleAr: l.titleAr ?? l.title_ar,
       videoUrl: l.videoUrl ?? l.video_url,
@@ -252,13 +248,34 @@ export async function GET(
       acceptsHomework: Boolean((l as { acceptsHomework?: boolean; accepts_homework?: boolean }).acceptsHomework ?? (l as { accepts_homework?: boolean }).accepts_homework ?? false),
     })),
     quizzes: data.quizzes.map((q) => ({
+      id: q.id,
       title: q.title,
+      quizType: (q as { quizType?: string }).quizType ?? "NORMAL",
+      parentQuizId: (q as { parentQuizId?: string | null }).parentQuizId ?? null,
       timeLimitMinutes: (q as { timeLimitMinutes?: number | null }).timeLimitMinutes ?? null,
-      questions: (q.questions ?? []).map((qt) => ({
+        maxAttempts: (() => {
+          const raw = (q as { maxAttempts?: number | null; max_attempts?: number | null }).maxAttempts
+            ?? (q as { max_attempts?: number | null }).max_attempts;
+          if (raw == null) return null;
+          const n = Number(raw);
+          return Number.isFinite(n) && n >= 1 ? n : null;
+        })(),
+        questions: (q.questions ?? []).map((qt) => ({
         type: qt.type,
         questionText: qt.questionText ?? qt.question_text,
         options: (qt.options ?? []).map((o) => ({ text: o.text, isCorrect: o.isCorrect ?? o.is_correct })),
       })),
+    })),
+    linkedQuizzes: (data.linkedQuizzes ?? []).map((q) => ({
+      id: q.id,
+      title: q.title,
+      quizType: (q as { quizType?: string }).quizType ?? "NORMAL",
+      parentQuizId: (q as { parentQuizId?: string | null }).parentQuizId ?? null,
+      ownerCourseId: (q as { ownerCourseId?: string }).ownerCourseId ?? "",
+      ownerCourseTitle: (q as { ownerCourseTitle?: string }).ownerCourseTitle ?? "",
+      ownerCourseTitleAr: (q as { ownerCourseTitleAr?: string | null }).ownerCourseTitleAr ?? null,
+      order: (q as { order?: number }).order ?? 0,
+      questionCount: (q as { _count?: { questions?: number } })._count?.questions ?? 0,
     })),
   };
   return NextResponse.json(payload);
@@ -280,12 +297,21 @@ export async function DELETE(
   if (!course) {
     return NextResponse.json({ error: "الدورة غير موجودة" }, { status: 404 });
   }
-  const createdByDel = (course as { createdById?: string | null; created_by_id?: string | null }).createdById ?? (course as { created_by_id?: string | null }).created_by_id ?? null;
-  if (!canManageCourse(session.user.role, session.user.id, createdByDel)) {
+  const { createdById: createdByDel, assignedTeacherId: assignedDel } = readCourseManageIds(
+    course as {
+      createdById?: string | null;
+      created_by_id?: string | null;
+      assignedTeacherId?: string | null;
+      assigned_teacher_id?: string | null;
+    },
+  );
+  if (!canManageCourse(session.user.role, session.user.id, createdByDel, assignedDel)) {
     return NextResponse.json({ error: "غير مصرح" }, { status: 403 });
   }
 
   await deleteCourse(id);
+
+  revalidatePublicCache(PUBLIC_CACHE_TAGS.courses);
 
   return NextResponse.json({ success: true });
 }

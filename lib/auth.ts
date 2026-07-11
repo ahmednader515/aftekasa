@@ -3,7 +3,12 @@ import { decode as defaultJwtDecode } from "next-auth/jwt";
 import CredentialsProvider from "next-auth/providers/credentials";
 import { compare } from "bcryptjs";
 import { randomUUID } from "crypto";
-import { getUserByEmailOrPhone, getCurrentSessionId, setCurrentSessionId } from "@/lib/db";
+import {
+  getUserByEmailOrPhone,
+  getCurrentSessionId,
+  setCurrentSessionId,
+  supportsConcurrentSessionTracking,
+} from "@/lib/db";
 import type { UserRole } from "@/lib/types";
 import { CONCURRENT_SESSION_ERROR } from "@/lib/auth-constants";
 
@@ -42,12 +47,16 @@ export const authOptions: NextAuthOptions = {
         if (!user) return null;
         const ok = await compare(credentials.password, user.password_hash);
         if (!ok) return null;
-        const existingSessionId = await getCurrentSessionId(user.id);
-        if (existingSessionId != null && existingSessionId !== "") {
-          throw new Error(CONCURRENT_SESSION_ERROR);
+        const trackSessions = await supportsConcurrentSessionTracking();
+        let sessionId: string | undefined;
+        if (trackSessions) {
+          const existingSessionId = await getCurrentSessionId(user.id);
+          if (existingSessionId != null && existingSessionId !== "") {
+            throw new Error(CONCURRENT_SESSION_ERROR);
+          }
+          sessionId = randomUUID();
+          await setCurrentSessionId(user.id, sessionId);
         }
-        const sessionId = randomUUID();
-        await setCurrentSessionId(user.id, sessionId);
         return {
           id: user.id,
           email: user.email,
@@ -72,11 +81,15 @@ export const authOptions: NextAuthOptions = {
       if (session.user) {
         (session.user as { id?: string }).id = token.id as string;
         (session.user as { role?: UserRole }).role = token.role as UserRole;
-        const { getCurrentSessionId: getSessionId } = await import("@/lib/db");
-        const dbSessionId = await getSessionId((session.user as { id: string }).id);
-        const sessionMismatch = !dbSessionId || dbSessionId.trim() === "" || dbSessionId !== token.sessionId;
-        if (token.sessionId && sessionMismatch) {
-          (session as { forceLogout?: boolean }).forceLogout = true;
+        const { getCurrentSessionId: getSessionId, supportsConcurrentSessionTracking: trackSessions } =
+          await import("@/lib/db");
+        if (await trackSessions()) {
+          const dbSessionId = await getSessionId((session.user as { id: string }).id);
+          const sessionMismatch =
+            !dbSessionId || dbSessionId.trim() === "" || dbSessionId !== token.sessionId;
+          if (token.sessionId && sessionMismatch) {
+            (session as { forceLogout?: boolean }).forceLogout = true;
+          }
         }
       }
       return session;

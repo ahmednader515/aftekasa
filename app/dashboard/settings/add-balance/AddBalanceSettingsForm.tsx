@@ -22,12 +22,6 @@ export function AddBalanceSettingsForm({ initialSettings }: { initialSettings: H
     addBalanceTransferInstruction: initialSettings.addBalanceTransferInstruction ?? "",
     addBalanceTransferInstructionEn: initialSettings.addBalanceTransferInstructionEn ?? "",
     addBalanceWalletNumber: initialSettings.addBalanceWalletNumber ?? "",
-    addBalanceInstapayMethodTitle: initialSettings.addBalanceInstapayMethodTitle ?? "",
-    addBalanceInstapayMethodTitleEn: initialSettings.addBalanceInstapayMethodTitleEn ?? "",
-    addBalanceInstapayWalletNumber: initialSettings.addBalanceInstapayWalletNumber ?? "",
-    addBalanceEtisalatMethodTitle: initialSettings.addBalanceEtisalatMethodTitle ?? "",
-    addBalanceEtisalatMethodTitleEn: initialSettings.addBalanceEtisalatMethodTitleEn ?? "",
-    addBalanceEtisalatWalletNumber: initialSettings.addBalanceEtisalatWalletNumber ?? "",
     addBalanceConfirmationNote: initialSettings.addBalanceConfirmationNote ?? "",
     addBalanceConfirmationNoteEn: initialSettings.addBalanceConfirmationNoteEn ?? "",
     addBalanceWhatsappNumber: initialSettings.addBalanceWhatsappNumber ?? "",
@@ -133,47 +127,6 @@ export function AddBalanceSettingsForm({ initialSettings }: { initialSettings: H
             placeholder={t(`${Ab}.phWallet`)}
             className="w-full rounded-[var(--radius-btn)] border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2"
           />
-          <div className="mt-2 grid gap-3 sm:grid-cols-2">
-            <input
-              value={form.addBalanceInstapayMethodTitle}
-              onChange={(e) => setForm((f) => ({ ...f, addBalanceInstapayMethodTitle: e.target.value }))}
-              placeholder={t(`${Ab}.phInstapayTitleAr`, "Instapay title (Arabic)")}
-              className="w-full rounded-[var(--radius-btn)] border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2"
-            />
-            <input
-              value={form.addBalanceInstapayMethodTitleEn}
-              onChange={(e) => setForm((f) => ({ ...f, addBalanceInstapayMethodTitleEn: e.target.value }))}
-              placeholder={t(`${Ab}.phInstapayTitleEn`, "Instapay title (English)")}
-              className="w-full rounded-[var(--radius-btn)] border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2"
-            />
-            <input
-              value={form.addBalanceInstapayWalletNumber}
-              onChange={(e) => setForm((f) => ({ ...f, addBalanceInstapayWalletNumber: e.target.value }))}
-              placeholder={t(`${Ab}.phInstapayWallet`, "Instapay number / account")}
-              className="w-full rounded-[var(--radius-btn)] border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2 sm:col-span-2"
-            />
-          </div>
-
-          <div className="mt-2 grid gap-3 sm:grid-cols-2">
-            <input
-              value={form.addBalanceEtisalatMethodTitle}
-              onChange={(e) => setForm((f) => ({ ...f, addBalanceEtisalatMethodTitle: e.target.value }))}
-              placeholder={t(`${Ab}.phEtisalatTitleAr`, "Etisalat Cash title (Arabic)")}
-              className="w-full rounded-[var(--radius-btn)] border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2"
-            />
-            <input
-              value={form.addBalanceEtisalatMethodTitleEn}
-              onChange={(e) => setForm((f) => ({ ...f, addBalanceEtisalatMethodTitleEn: e.target.value }))}
-              placeholder={t(`${Ab}.phEtisalatTitleEn`, "Etisalat Cash title (English)")}
-              className="w-full rounded-[var(--radius-btn)] border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2"
-            />
-            <input
-              value={form.addBalanceEtisalatWalletNumber}
-              onChange={(e) => setForm((f) => ({ ...f, addBalanceEtisalatWalletNumber: e.target.value }))}
-              placeholder={t(`${Ab}.phEtisalatWallet`, "Etisalat Cash wallet number")}
-              className="w-full rounded-[var(--radius-btn)] border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2 sm:col-span-2"
-            />
-          </div>
           <textarea
             value={form.addBalanceConfirmationNote}
             onChange={(e) => setForm((f) => ({ ...f, addBalanceConfirmationNote: e.target.value }))}

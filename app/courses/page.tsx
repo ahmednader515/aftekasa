@@ -1,13 +1,12 @@
-import { unstable_noStore } from "next/cache";
-import { getCoursesPublished, getTeacherIdsExcludedFromPublicCourseLists, getUserById } from "@/lib/db";
+import { getCoursesPublishedCached } from "@/lib/public-data-cache";
+import { getTeacherIdsExcludedFromPublicCourseLists, getUserById } from "@/lib/db";
+import { courseIsHiddenFromPublicTeacherCatalog } from "@/lib/permissions";
 import { redirect } from "next/navigation";
 import { TeacherCoursesSearch, type TeacherCourseListItem } from "./TeacherCoursesSearch";
-import { getLocaleFromCookie, getServerTranslator } from "@/lib/i18n/server";
+import { getServerTranslator } from "@/lib/i18n/server";
 import { pickLocalizedText } from "@/lib/i18n/localized-field";
 
-/** عدم تخزين الصفحة مؤقتاً — الكورسات الجديدة والمحذوفة تظهر فوراً */
-export const dynamic = "force-dynamic";
-export const revalidate = 0;
+export const revalidate = 60;
 
 export async function generateMetadata() {
   const t = await getServerTranslator();
@@ -20,12 +19,11 @@ export async function generateMetadata() {
 type Props = { searchParams: Promise<{ category?: string; teacher?: string }> };
 
 export default async function CoursesPage({ searchParams }: Props) {
-  unstable_noStore();
-  const [t, locale] = await Promise.all([getServerTranslator(), getLocaleFromCookie()]);
+  const t = await getServerTranslator();
   const { category: categorySlug, teacher: teacherId } = await searchParams;
-  let courses: Awaited<ReturnType<typeof getCoursesPublished>> = [];
+  let courses: Awaited<ReturnType<typeof getCoursesPublishedCached>> = [];
   try {
-    courses = await getCoursesPublished(true);
+    courses = await getCoursesPublishedCached(true);
   } catch {
     // DB not connected
   }
@@ -49,22 +47,26 @@ export default async function CoursesPage({ searchParams }: Props) {
 
   if (tid) {
     filtered = filtered.filter((c) => {
-      const row = c as { createdById?: string | null; created_by_id?: string | null };
+      const row = c as {
+        createdById?: string | null;
+        created_by_id?: string | null;
+        assignedTeacherId?: string | null;
+        assigned_teacher_id?: string | null;
+      };
       const creator = row.createdById ?? row.created_by_id ?? null;
-      return creator === tid;
+      const assigned = row.assignedTeacherId ?? row.assigned_teacher_id ?? null;
+      return creator === tid || assigned === tid;
     });
   } else if (hideTeacherCreators.size > 0) {
-    filtered = filtered.filter((c) => {
-      const row = c as { createdById?: string | null; created_by_id?: string | null };
-      const creator = row.createdById ?? row.created_by_id ?? null;
-      return !creator || !hideTeacherCreators.has(creator);
-    });
+    filtered = filtered.filter(
+      (c) => !courseIsHiddenFromPublicTeacherCatalog(c, hideTeacherCreators),
+    );
   }
 
   const categoryName =
     categorySlug && filtered.length > 0
       ? pickLocalizedText(
-          locale,
+          null,
           (filtered[0] as { category?: { nameAr?: string | null; name?: string | null } }).category?.nameAr ?? null,
           (filtered[0] as { category?: { name?: string | null } }).category?.name ?? null,
         )

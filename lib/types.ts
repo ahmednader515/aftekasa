@@ -250,14 +250,6 @@ export interface HomepageSetting {
   addBalanceTransferInstructionEn?: string | null;
   /** رقم المحفظة/التحويل */
   addBalanceWalletNumber?: string | null;
-  /** Instapay */
-  addBalanceInstapayMethodTitle?: string | null;
-  addBalanceInstapayMethodTitleEn?: string | null;
-  addBalanceInstapayWalletNumber?: string | null;
-  /** Etisalat Cash */
-  addBalanceEtisalatMethodTitle?: string | null;
-  addBalanceEtisalatMethodTitleEn?: string | null;
-  addBalanceEtisalatWalletNumber?: string | null;
   /** ملاحظة ما بعد التحويل */
   addBalanceConfirmationNote?: string | null;
   addBalanceConfirmationNoteEn?: string | null;
@@ -306,6 +298,7 @@ export interface Course {
   order: number;
   category_id: string | null;
   created_by_id: string | null;
+  assigned_teacher_id?: string | null;
   accepts_homework?: boolean;
   /** متوسط تقييم الكورس المحسوب من كل تقييمات دروسه */
   course_rating?: number | null;
@@ -357,15 +350,45 @@ export interface Lesson {
 
 export type QuestionType = "MULTIPLE_CHOICE" | "ESSAY" | "TRUE_FALSE";
 
+export type QuizType = "NORMAL" | "REMEDIAL";
+
 export interface Quiz {
   id: string;
   title: string;
   course_id: string;
   order: number;
   time_limit_minutes?: number | null;
+  quiz_type?: QuizType;
+  parent_quiz_id?: string | null;
+  max_attempts?: number | null;
   created_at: Date;
   updated_at: Date;
 }
+
+export interface QuizCourseAssignment {
+  id: string;
+  quiz_id: string;
+  course_id: string;
+  position: number;
+  created_at: Date;
+  updated_at: Date;
+}
+
+export type QuizAdminManageRow = {
+  id: string;
+  title: string;
+  quizType: QuizType;
+  ownerCourseId: string;
+  ownerCourseTitle: string;
+  ownerCourseTitleAr: string | null;
+  questionCount: number;
+  linkedCourses: Array<{
+    courseId: string;
+    courseTitle: string;
+    courseTitleAr: string | null;
+    position: number;
+  }>;
+};
 
 export interface Question {
   id: string;
@@ -373,6 +396,7 @@ export interface Question {
   question_text: string;
   order: number;
   quiz_id: string;
+  image_url?: string | null;
   created_at: Date;
   updated_at: Date;
 }
@@ -382,6 +406,7 @@ export interface QuestionOption {
   text: string;
   is_correct: boolean;
   question_id: string;
+  position: number;
   created_at: Date;
   updated_at: Date;
 }

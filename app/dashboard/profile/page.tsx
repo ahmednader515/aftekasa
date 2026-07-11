@@ -1,12 +1,13 @@
-import { getSession } from "@/lib/auth-server";
+import { getServerSession } from "next-auth";
 import { redirect } from "next/navigation";
 import Link from "next/link";
+import { authOptions } from "@/lib/auth";
 import { getUserById } from "@/lib/db";
 import { ProfileForm } from "./ProfileForm";
 import { TeacherPublicProfileForm } from "./TeacherPublicProfileForm";
 
 export default async function ProfilePage() {
-  const session = await getSession();
+  const session = await getServerSession(authOptions);
   if (!session) redirect("/login");
 
   const user = await getUserById(session.user.id);

@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useLocale, useT } from "./LocaleProvider";
+import { useT } from "./LocaleProvider";
 
 function normalizeCoursePrice(
   price: number | { toNumber?: () => number } | string | undefined,
@@ -25,6 +25,7 @@ type Course = {
   duration?: string | null;
   level?: string | null;
   imageUrl?: string | null;
+  image_url?: string | null;
   price?: number | { toNumber?: () => number } | string;
   courseRating?: number | { toNumber?: () => number } | string | null;
   courseRatingCount?: number | { toNumber?: () => number } | string | null;
@@ -32,15 +33,10 @@ type Course = {
 };
 
 export function CourseCard({ course }: { course: Course }) {
-  const locale = useLocale();
   const t = useT();
-  const displayTitle = locale === "en" ? (course.title || course.titleAr) : (course.titleAr || course.title);
-  const categoryName =
-    locale === "en"
-      ? (course.category?.name || course.category?.nameAr)
-      : (course.category?.nameAr || course.category?.name);
-  const shortDescription =
-    locale === "en" ? (course.shortDescEn || course.shortDesc) : (course.shortDesc || course.shortDescEn);
+  const displayTitle = course.titleAr || course.title;
+  const categoryName = course.category?.nameAr || course.category?.name;
+  const shortDescription = course.shortDesc || course.shortDescEn;
   const slugOrId = (course.slug && course.slug.trim()) ? encodeURIComponent(course.slug.trim()) : course.id;
   const href = slugOrId ? `/courses/${slugOrId}` : "/courses";
   const priceValue = normalizeCoursePrice(course.price);
@@ -55,15 +51,17 @@ export function CourseCard({ course }: { course: Course }) {
     priceValue !== null && priceValue > 0 ? priceValue.toFixed(2) : null;
   const isPaid = priceDisplay !== null;
 
+  const imageSrc = course.imageUrl ?? course.image_url ?? null;
+
   return (
     <Link
       href={href}
       className="group block overflow-hidden rounded-[var(--radius-card)] border border-[var(--color-border)] bg-[var(--color-surface)] shadow-[var(--shadow-card)] transition hover:shadow-[var(--shadow-hover)] hover:border-[var(--color-primary)]/30"
     >
       <div className="aspect-video w-full bg-gradient-to-br from-[var(--color-primary)]/20 to-[var(--color-primary-light)]/30 flex items-center justify-center">
-        {course.imageUrl ? (
+        {imageSrc ? (
           <img
-            src={course.imageUrl}
+            src={imageSrc}
             alt=""
             className="h-full w-full object-cover"
           />

@@ -1,16 +1,18 @@
-import { getSession } from "@/lib/auth-server";
+import { getServerSession } from "next-auth";
 import { redirect } from "next/navigation";
-import { getSubscriptionsFeatureEnabled, listSubscriptionPlansAll } from "@/lib/db";
-import { SubscriptionsAdminClient, type AdminPlanRow } from "./SubscriptionsAdminClient";
+import { authOptions } from "@/lib/auth";
+import { getSubscriptionsFeatureEnabled, getCategories, listSubscriptionPlansAll } from "@/lib/db";
+import { SubscriptionsAdminClient, type AdminPlanRow, type AdminCategoryOption } from "./SubscriptionsAdminClient";
 
 export default async function SubscriptionsDashboardPage() {
-  const session = await getSession();
+  const session = await getServerSession(authOptions);
   if (!session || session.user.role !== "ADMIN") {
     redirect("/dashboard");
   }
 
   const enabled = await getSubscriptionsFeatureEnabled();
   let plans: AdminPlanRow[] = [];
+  let categories: AdminCategoryOption[] = [];
   try {
     const rows = await listSubscriptionPlansAll();
     plans = rows.map((r) => ({
@@ -21,10 +23,20 @@ export default async function SubscriptionsDashboardPage() {
       durationKind: r.durationKind,
       price: r.price,
       isActive: r.isActive,
+      categoryId: r.categoryId,
+      categoryName: r.categoryName,
+    }));
+    const cats = await getCategories();
+    categories = cats.map((c) => ({
+      id: c.id,
+      name: (c as { nameAr?: string | null }).nameAr?.trim() || c.name,
     }));
   } catch {
     plans = [];
+    categories = [];
   }
 
-  return <SubscriptionsAdminClient initialEnabled={enabled} initialPlans={plans} />;
+  return (
+    <SubscriptionsAdminClient initialEnabled={enabled} initialPlans={plans} categories={categories} />
+  );
 }

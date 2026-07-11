@@ -1,5 +1,7 @@
 import "dotenv/config";
+import { randomUUID } from "crypto";
 import { cache } from "react";
+import { unstable_cache } from "next/cache";
 import { neon } from "@neondatabase/serverless";
 import type {
   User,
@@ -16,12 +18,14 @@ import type {
   Quiz,
   Question,
   QuestionOption,
+  QuizType,
   LiveStream,
   LiveStreamProvider,
   Conversation,
   Message,
   SubscriptionDurationKind,
   PlatformDetailsItem,
+  QuizAdminManageRow,
 } from "./types";
 import { generateCopyrightCodeCandidate } from "./copyright-code";
 import {
@@ -48,6 +52,19 @@ import {
   HOMEPAGE_DEFAULT_STORE_SECTION_DESCRIPTION_AR,
   HOMEPAGE_DEFAULT_STORE_SECTION_TITLE_AR,
 } from "./homepage-known-defaults";
+import {
+  appRoleToLegacyRole,
+  detectSchemaMode,
+  isCourseSegmentId,
+  legacyRolesForAppRole,
+  mapLegacyChapterToLesson,
+  mapLegacyCourseRow,
+  mapLegacyPurchaseToEnrollment,
+  mapLegacyQuestionWithOptions,
+  mapLegacyQuestionRow,
+  mapLegacyQuizRow,
+  mapLegacyUserRow,
+} from "./legacy-schema";
 
 const connectionString = process.env.DATABASE_URL;
 if (!connectionString) throw new Error("DATABASE_URL غير معرّف");
@@ -82,9 +99,39 @@ function rowToCamel<T = Record<string, unknown>>(row: Record<string, unknown> | 
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(row)) {
     const key = snakeToCamel(k);
-    out[key] = v;
+    // Prefer snake_case when both is_published and isPublished exist on legacy DBs
+    if (!(key in out) || k.includes("_")) {
+      out[key] = v;
+    }
   }
   return out as T;
+}
+
+async function syncCourseLegacyColumns(
+  id: string,
+  data: { is_published?: boolean; image_url?: string | null; created_by_id?: string },
+): Promise<void> {
+  if (data.is_published !== undefined) {
+    try {
+      await sql`UPDATE "Course" SET "isPublished" = ${data.is_published} WHERE id = ${id}`;
+    } catch {
+      /* legacy column absent */
+    }
+  }
+  if (data.image_url !== undefined) {
+    try {
+      await sql`UPDATE "Course" SET "imageUrl" = ${data.image_url} WHERE id = ${id}`;
+    } catch {
+      /* legacy column absent */
+    }
+  }
+  if (data.created_by_id !== undefined) {
+    try {
+      await sql`UPDATE "Course" SET "userId" = ${data.created_by_id} WHERE id = ${id}`;
+    } catch {
+      /* legacy column absent */
+    }
+  }
 }
 
 function rowsToCamel<T = Record<string, unknown>>(rows: Record<string, unknown>[]): T[] {
@@ -98,7 +145,41 @@ function generateId(): string {
 }
 
 // ----- User -----
+async function matchLegacyUserByPhoneDigits(digits: string): Promise<User | null> {
+  const matchByDigits = async (norm: string) => {
+    const rows = await sql`
+      SELECT * FROM "User"
+      WHERE REGEXP_REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(COALESCE("parentPhoneNumber", ''), '٠','0'),'١','1'),'٢','2'),'٣','3'),'٤','4'),'٥','5'),'٦','6'),'٧','7'),'٨','8'),'٩','9'), '[^0-9]', '', 'g') = ${norm}
+         OR REGEXP_REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(COALESCE("phoneNumber", ''), '٠','0'),'١','1'),'٢','2'),'٣','3'),'٤','4'),'٥','5'),'٦','6'),'٧','7'),'٨','8'),'٩','9'), '[^0-9]', '', 'g') = ${norm}
+      LIMIT 1
+    `;
+    const row = rows[0] as Record<string, unknown> | undefined;
+    return row ? mapLegacyUserRow(row) : null;
+  };
+
+  let user = await matchByDigits(digits);
+  if (user) return user;
+  if (digits.startsWith("20") && digits.length === 12) {
+    user = await matchByDigits("0" + digits.slice(2));
+    if (user) return user;
+  }
+  if (digits.startsWith("0") && digits.length === 11) {
+    user = await matchByDigits("20" + digits.slice(1));
+    if (user) return user;
+  }
+  if (digits.length === 10) {
+    user = await matchByDigits("0" + digits);
+    if (user) return user;
+  }
+  return null;
+}
+
 export async function getUserByEmail(email: string): Promise<User | null> {
+  if ((await detectSchemaMode(sql)) === "legacy") {
+    const phone = email.replace(/@phone\.local$/i, "");
+    if (phone !== email) return matchLegacyUserByPhoneDigits(phone.replace(/\D/g, ""));
+    return null;
+  }
   const rows = await sql`SELECT * FROM "User" WHERE email = ${email} LIMIT 1`;
   return (rows[0] as User) ?? null;
 }
@@ -117,6 +198,13 @@ function normalizeArabicDigits(s: string): string {
 /** تسجيل الدخول بالبريد أو رقم الهاتف: إذا القيمة تحتوي @ نبحث بالبريد، وإلا بالرقم (مقارنة بعد حذف غير الأرقام وتوحيد صيغ 0 و 20) */
 export async function getUserByEmailOrPhone(emailOrPhone: string): Promise<User | null> {
   const trimmed = emailOrPhone.trim();
+  if ((await detectSchemaMode(sql)) === "legacy") {
+    if (trimmed.includes("@")) return getUserByEmail(trimmed);
+    const withWesternDigits = normalizeArabicDigits(trimmed);
+    const digits = withWesternDigits.replace(/\D/g, "");
+    if (digits.length < 10) return null;
+    return matchLegacyUserByPhoneDigits(digits);
+  }
   if (trimmed.includes("@")) {
     return getUserByEmail(trimmed);
   }
@@ -153,48 +241,60 @@ export async function getUserByEmailOrPhone(emailOrPhone: string): Promise<User 
 
 export async function getUserById(id: string): Promise<User | null> {
   const rows = await sql`SELECT * FROM "User" WHERE id = ${id} LIMIT 1`;
-  return (rows[0] as User) ?? null;
+  const row = rows[0] as Record<string, unknown> | undefined;
+  if (!row) return null;
+  if ((await detectSchemaMode(sql)) === "legacy") return mapLegacyUserRow(row);
+  return row as unknown as User;
 }
 
-const sessionIdCache = new Map<string, { value: string | null; at: number }>();
-const SESSION_ID_CACHE_MS = 20_000;
-
-function readSessionIdCache(userId: string): string | null | undefined {
-  const cached = sessionIdCache.get(userId);
-  if (!cached) return undefined;
-  if (Date.now() - cached.at > SESSION_ID_CACHE_MS) {
-    sessionIdCache.delete(userId);
-    return undefined;
+/** يتحقق أن المعرّف يعود لمستخدم برتبة مدرس — لإسناد الكورسات من لوحة الأدمن */
+export async function assertAssignableTeacher(userId: string): Promise<User> {
+  const id = String(userId ?? "").trim();
+  if (!id) throw new Error("معرّف المدرس مطلوب");
+  const user = await getUserById(id);
+  if (!user || user.role !== "TEACHER") {
+    throw new Error("المدرس المحدد غير موجود أو غير صالح");
   }
-  return cached.value;
+  return user;
 }
 
-function writeSessionIdCache(userId: string, value: string | null): void {
-  sessionIdCache.set(userId, { value, at: Date.now() });
+/** Whether the DB supports storing one active session id per user (legacy schema does not). */
+export async function supportsConcurrentSessionTracking(): Promise<boolean> {
+  return (await detectSchemaMode(sql)) !== "legacy";
+}
+
+const SESSION_ID_CACHE_TTL_MS = 30_000;
+const sessionIdCache = new Map<string, { value: string | null; expires: number }>();
+
+function invalidateSessionIdCache(userId: string) {
+  sessionIdCache.delete(userId);
 }
 
 /** جلسة واحدة نشطة لكل مستخدم — نستخدمها لمنع تسجيل الدخول من أكثر من جهاز */
 export async function getCurrentSessionId(userId: string): Promise<string | null> {
-  const cached = readSessionIdCache(userId);
-  if (cached !== undefined) return cached;
+  if (!(await supportsConcurrentSessionTracking())) return null;
+  const now = Date.now();
+  const cached = sessionIdCache.get(userId);
+  if (cached && cached.expires > now) return cached.value;
   try {
     const rows = await sql`SELECT current_session_id FROM "User" WHERE id = ${userId} LIMIT 1`;
-    const val = (rows[0] as { current_session_id?: string | null })?.current_session_id;
-    const value = val ?? null;
-    writeSessionIdCache(userId, value);
-    return value;
+    const val = (rows[0] as { current_session_id?: string | null })?.current_session_id ?? null;
+    sessionIdCache.set(userId, { value: val, expires: now + SESSION_ID_CACHE_TTL_MS });
+    return val;
   } catch {
     return null;
   }
 }
 
 export async function setCurrentSessionId(userId: string, sessionId: string): Promise<void> {
-  writeSessionIdCache(userId, sessionId);
+  if (!(await supportsConcurrentSessionTracking())) return;
+  invalidateSessionIdCache(userId);
   await sql`UPDATE "User" SET current_session_id = ${sessionId} WHERE id = ${userId}`;
 }
 
 export async function clearCurrentSessionId(userId: string): Promise<void> {
-  writeSessionIdCache(userId, null);
+  if (!(await supportsConcurrentSessionTracking())) return;
+  invalidateSessionIdCache(userId);
   await sql`UPDATE "User" SET current_session_id = NULL WHERE id = ${userId}`;
 }
 
@@ -363,7 +463,31 @@ export async function createUser(data: {
   guardian_number?: string | null;
   teacher_subject?: string | null;
   teacher_avatar_url?: string | null;
+  grade?: string | null;
+  division?: string | null;
+  study_type?: string | null;
+  governorate?: string | null;
 }): Promise<User> {
+  if ((await detectSchemaMode(sql)) === "legacy") {
+    const id = randomUUID();
+    const phone = (data.student_number ?? data.email.replace(/@phone\.local$/i, "")).trim();
+    const legacyRole = appRoleToLegacyRole(data.role ?? "STUDENT");
+    await sql`
+      INSERT INTO "User" (
+        id, "fullName", "phoneNumber", "parentPhoneNumber", "hashedPassword",
+        role, balance, grade, division, "studyType", governorate,
+        "createdAt", "updatedAt"
+      )
+      VALUES (
+        ${id}, ${data.name}, ${phone}, ${data.guardian_number ?? phone}, ${data.password_hash},
+        ${legacyRole}, 0, ${data.grade ?? null}, ${data.division ?? null}, ${data.study_type ?? null}, ${data.governorate ?? null},
+        NOW(), NOW()
+      )
+    `;
+    const u = await getUserById(id);
+    if (!u) throw new Error("فشل إنشاء المستخدم");
+    return u;
+  }
   const id = generateId();
   let usedFallbackInsertWithoutTeacherCols = false;
   if (data.role === "TEACHER") {
@@ -420,6 +544,15 @@ export async function updateUser(
     teacher_avatar_url?: string | null;
   }
 ): Promise<void> {
+  if ((await detectSchemaMode(sql)) === "legacy") {
+    if (data.name !== undefined) await sql`UPDATE "User" SET "fullName" = ${data.name}, "updatedAt" = NOW() WHERE id = ${id}`;
+    if (data.role !== undefined) await sql`UPDATE "User" SET role = ${appRoleToLegacyRole(data.role)}, "updatedAt" = NOW() WHERE id = ${id}`;
+    if (data.balance !== undefined) await sql`UPDATE "User" SET balance = ${Number(data.balance)}, "updatedAt" = NOW() WHERE id = ${id}`;
+    if (data.password_hash !== undefined) await sql`UPDATE "User" SET "hashedPassword" = ${data.password_hash}, "updatedAt" = NOW() WHERE id = ${id}`;
+    if (data.student_number !== undefined) await sql`UPDATE "User" SET "phoneNumber" = ${data.student_number}, "updatedAt" = NOW() WHERE id = ${id}`;
+    if (data.guardian_number !== undefined) await sql`UPDATE "User" SET "parentPhoneNumber" = ${data.guardian_number}, "updatedAt" = NOW() WHERE id = ${id}`;
+    return;
+  }
   if (data.name !== undefined) await sql`UPDATE "User" SET name = ${data.name}, updated_at = NOW() WHERE id = ${id}`;
   if (data.email !== undefined) await sql`UPDATE "User" SET email = ${data.email}, updated_at = NOW() WHERE id = ${id}`;
   if (data.role !== undefined) await sql`UPDATE "User" SET role = ${data.role}, updated_at = NOW() WHERE id = ${id}`;
@@ -441,6 +574,16 @@ export async function updateUser(
       /* عمود غير موجود */
     }
   }
+}
+
+/** حذف مستخدم نهائياً — يعتمد على ON DELETE CASCADE في الجداول المرتبطة */
+export async function deleteUserById(id: string): Promise<boolean> {
+  if ((await detectSchemaMode(sql)) === "legacy") {
+    const rows = await sql`DELETE FROM "User" WHERE id = ${id} RETURNING id`;
+    return (rows as unknown[]).length > 0;
+  }
+  const rows = await sql`DELETE FROM "User" WHERE id = ${id} RETURNING id`;
+  return (rows as unknown[]).length > 0;
 }
 
 // ----- PasswordChangeRequest (طلبات تغيير كلمة المرور) -----
@@ -930,12 +1073,6 @@ const HOMEPAGE_DEFAULTS: HomepageSetting = {
   addBalanceTransferInstruction: "قم بتحويل المبلغ المطلوب إلى رقم المحفظة التالي:",
   addBalanceTransferInstructionEn: null,
   addBalanceWalletNumber: "01023005622",
-  addBalanceInstapayMethodTitle: "إنستاباي",
-  addBalanceInstapayMethodTitleEn: "Instapay",
-  addBalanceInstapayWalletNumber: null,
-  addBalanceEtisalatMethodTitle: "اتصالات كاش",
-  addBalanceEtisalatMethodTitleEn: "Etisalat Cash",
-  addBalanceEtisalatWalletNumber: null,
   addBalanceConfirmationNote:
     "بعد التحويل، يجب إرسال صورة تأكيد التحويل على واتساب على الرقم",
   addBalanceConfirmationNoteEn: null,
@@ -1188,12 +1325,6 @@ async function ensureAddBalanceSettingsColumns(): Promise<void> {
       await sql`ALTER TABLE "HomepageSetting" ADD COLUMN IF NOT EXISTS add_balance_method_title TEXT`;
       await sql`ALTER TABLE "HomepageSetting" ADD COLUMN IF NOT EXISTS add_balance_transfer_instruction TEXT`;
       await sql`ALTER TABLE "HomepageSetting" ADD COLUMN IF NOT EXISTS add_balance_wallet_number TEXT`;
-      await sql`ALTER TABLE "HomepageSetting" ADD COLUMN IF NOT EXISTS add_balance_instapay_method_title TEXT`;
-      await sql`ALTER TABLE "HomepageSetting" ADD COLUMN IF NOT EXISTS add_balance_instapay_method_title_en TEXT`;
-      await sql`ALTER TABLE "HomepageSetting" ADD COLUMN IF NOT EXISTS add_balance_instapay_wallet_number TEXT`;
-      await sql`ALTER TABLE "HomepageSetting" ADD COLUMN IF NOT EXISTS add_balance_etisalat_method_title TEXT`;
-      await sql`ALTER TABLE "HomepageSetting" ADD COLUMN IF NOT EXISTS add_balance_etisalat_method_title_en TEXT`;
-      await sql`ALTER TABLE "HomepageSetting" ADD COLUMN IF NOT EXISTS add_balance_etisalat_wallet_number TEXT`;
       await sql`ALTER TABLE "HomepageSetting" ADD COLUMN IF NOT EXISTS add_balance_confirmation_note TEXT`;
       await sql`ALTER TABLE "HomepageSetting" ADD COLUMN IF NOT EXISTS add_balance_whatsapp_number TEXT`;
       await sql`ALTER TABLE "HomepageSetting" ADD COLUMN IF NOT EXISTS add_balance_whatsapp_button_text TEXT`;
@@ -1243,6 +1374,22 @@ export async function listTeachersPublic(categoryId?: string | null): Promise<
   Array<{ id: string; name: string; teacherSubject: string | null; teacherAvatarUrl: string | null }>
 > {
   const cat = categoryId?.trim() || null;
+  if ((await detectSchemaMode(sql)) === "legacy") {
+    if (cat) return [];
+    const rows = await sql`
+      SELECT DISTINCT u.id, u."fullName" as name, u.image as teacher_avatar_url
+      FROM "User" u
+      INNER JOIN "Course" c ON c."userId" = u.id AND c."isPublished" = true
+      WHERE u.role = 'TEACHER'
+      ORDER BY u."fullName" ASC
+    `;
+    return (rows as Record<string, unknown>[]).map((r) => ({
+      id: String(r.id),
+      name: String(r.name ?? ""),
+      teacherSubject: null,
+      teacherAvatarUrl: (r.teacher_avatar_url as string | null) ?? null,
+    }));
+  }
   const rows = cat
     ? await sql`
         SELECT DISTINCT u.id, u.name, u.teacher_subject, u.teacher_avatar_url
@@ -1332,6 +1479,48 @@ export async function setTeacherHomepageFeaturedSlots(orderedIds: string[]): Pro
 /** كل حسابات المدرسين — للصفحة الرئيسية (حتى من دون كورس منشور) + دوراته المنشورة داخل البطاقة */
 export async function listTeachersForHomepage(): Promise<TeacherHomepageRow[]> {
   try {
+    if ((await detectSchemaMode(sql)) === "legacy") {
+      const rows = await sql`
+        SELECT id, "fullName" as name, image, "createdAt"
+        FROM "User"
+        WHERE role = 'TEACHER'
+        ORDER BY "fullName" ASC
+      `;
+      const teachers = (rows as Record<string, unknown>[]).map((r) => ({
+        id: String(r.id),
+        name: String(r.name ?? ""),
+        teacherSubject: null,
+        teacherAvatarUrl: (r.image as string | null) ?? null,
+        createdAt:
+          r.createdAt instanceof Date
+            ? r.createdAt.toISOString()
+            : String((r.createdAt as string) ?? new Date().toISOString()),
+        homepageOrder: null,
+        courses: [] as TeacherHomepageCourse[],
+      }));
+      if (teachers.length === 0) return [];
+      const courseRows = await sql`
+        SELECT c.id, c.title, c."userId"
+        FROM "Course" c
+        INNER JOIN "User" u ON u.id = c."userId" AND u.role = 'TEACHER'
+        WHERE c."isPublished" = true
+        ORDER BY c."createdAt" DESC
+      `;
+      const byTeacher = new Map<string, TeacherHomepageCourse[]>();
+      for (const r of courseRows as Record<string, unknown>[]) {
+        const tid = String(r.userId ?? "");
+        if (!tid) continue;
+        const item: TeacherHomepageCourse = {
+          id: String(r.id),
+          slug: String(r.id),
+          title: String(r.title ?? "دورة"),
+        };
+        const list = byTeacher.get(tid);
+        if (list) list.push(item);
+        else byTeacher.set(tid, [item]);
+      }
+      return teachers.map((t) => ({ ...t, courses: byTeacher.get(t.id) ?? [] }));
+    }
     await ensureTeacherHomepageOrderColumn().catch(() => {});
     const rows = await sql`
       SELECT id, name, teacher_subject, teacher_avatar_url, created_at, teacher_homepage_order
@@ -1359,16 +1548,25 @@ export async function listTeachersForHomepage(): Promise<TeacherHomepageRow[]> {
     });
     if (teachers.length === 0) return [];
 
+    await ensureCourseAssignedTeacherColumn();
     const courseRows = await sql`
-      SELECT c.id, c.slug, c.title, c.title_ar, c.created_by_id
+      SELECT c.id, c.slug, c.title, c.title_ar,
+        COALESCE(
+          c.assigned_teacher_id,
+          CASE WHEN u.role = 'TEACHER' THEN c.created_by_id END
+        ) AS teacher_list_id
       FROM "Course" c
-      INNER JOIN "User" u ON u.id = c.created_by_id AND u.role = 'TEACHER'
+      LEFT JOIN "User" u ON u.id = c.created_by_id
       WHERE c.is_published = true
+        AND COALESCE(
+          c.assigned_teacher_id,
+          CASE WHEN u.role = 'TEACHER' THEN c.created_by_id END
+        ) IS NOT NULL
       ORDER BY c."order" ASC, c.created_at DESC
     `;
     const byTeacher = new Map<string, TeacherHomepageCourse[]>();
     for (const r of courseRows as Record<string, unknown>[]) {
-      const tid = String(r.created_by_id ?? "");
+      const tid = String(r.teacher_list_id ?? "");
       if (!tid) continue;
       const titleAr = (r.title_ar as string | null)?.trim();
       const title = (r.title as string | null)?.trim() || "دورة";
@@ -1408,6 +1606,21 @@ export async function getTeacherIdsExcludedFromPublicCourseLists(): Promise<Set<
 
 async function getHomepageSettingsUncached(): Promise<HomepageSetting> {
   try {
+    await ensureHomepageHeroTemplateColumns();
+    await ensureHomepageHeroSliderCourseIdColumns();
+    await ensureHomepageReviewsSectionCopyColumns();
+    await ensureHomepageHeroCustomBgColumns();
+    await ensureAddBalanceSettingsColumns();
+    await ensureHomepageStoreEnabledColumn();
+    await ensureHomepageStoreSectionCopyColumns();
+    await ensureHomepagePrimaryColorColumn();
+    await ensureHomepageHeaderLogoColumn();
+    await ensureHomepageTeamSupportLinksColumns();
+    await ensureHomepageCtaCopyColumns();
+    await ensureHomepageBilingualTextColumns();
+    await ensureHomepagePlatformDetailsColumns();
+    await ensureHomepagePlatformNewsColumns();
+    await ensureHomepageCopyrightOverlayColumns();
     const rows = await sql`SELECT * FROM "HomepageSetting" WHERE id = 'default' LIMIT 1`;
     const row = rows[0] as Record<string, unknown> | undefined;
     if (!row) return HOMEPAGE_DEFAULTS;
@@ -1869,56 +2082,6 @@ async function getHomepageSettingsUncached(): Promise<HomepageSetting> {
           : null,
       addBalanceWalletNumber:
         (c.addBalanceWalletNumber as string) ?? HOMEPAGE_DEFAULTS.addBalanceWalletNumber,
-      addBalanceInstapayMethodTitle: (() => {
-        const raw =
-          row.add_balance_instapay_method_title ??
-          (c as { addBalanceInstapayMethodTitle?: unknown }).addBalanceInstapayMethodTitle;
-        const s = raw != null ? String(raw).trim() : "";
-        if (s.length > 0) return s.slice(0, 300);
-        return (HOMEPAGE_DEFAULTS as { addBalanceInstapayMethodTitle?: string | null })
-          .addBalanceInstapayMethodTitle ?? "إنستاباي";
-      })(),
-      addBalanceInstapayMethodTitleEn: (() => {
-        const raw =
-          row.add_balance_instapay_method_title_en ??
-          (c as { addBalanceInstapayMethodTitleEn?: unknown }).addBalanceInstapayMethodTitleEn;
-        const s = raw != null ? String(raw).trim() : "";
-        if (s.length > 0) return s.slice(0, 300);
-        return (HOMEPAGE_DEFAULTS as { addBalanceInstapayMethodTitleEn?: string | null })
-          .addBalanceInstapayMethodTitleEn ?? "Instapay";
-      })(),
-      addBalanceInstapayWalletNumber: (() => {
-        const raw =
-          row.add_balance_instapay_wallet_number ??
-          (c as { addBalanceInstapayWalletNumber?: unknown }).addBalanceInstapayWalletNumber;
-        const s = raw != null ? String(raw).trim() : "";
-        return s.length > 0 ? s.slice(0, 80) : null;
-      })(),
-      addBalanceEtisalatMethodTitle: (() => {
-        const raw =
-          row.add_balance_etisalat_method_title ??
-          (c as { addBalanceEtisalatMethodTitle?: unknown }).addBalanceEtisalatMethodTitle;
-        const s = raw != null ? String(raw).trim() : "";
-        if (s.length > 0) return s.slice(0, 300);
-        return (HOMEPAGE_DEFAULTS as { addBalanceEtisalatMethodTitle?: string | null })
-          .addBalanceEtisalatMethodTitle ?? "اتصالات كاش";
-      })(),
-      addBalanceEtisalatMethodTitleEn: (() => {
-        const raw =
-          row.add_balance_etisalat_method_title_en ??
-          (c as { addBalanceEtisalatMethodTitleEn?: unknown }).addBalanceEtisalatMethodTitleEn;
-        const s = raw != null ? String(raw).trim() : "";
-        if (s.length > 0) return s.slice(0, 300);
-        return (HOMEPAGE_DEFAULTS as { addBalanceEtisalatMethodTitleEn?: string | null })
-          .addBalanceEtisalatMethodTitleEn ?? "Etisalat Cash";
-      })(),
-      addBalanceEtisalatWalletNumber: (() => {
-        const raw =
-          row.add_balance_etisalat_wallet_number ??
-          (c as { addBalanceEtisalatWalletNumber?: unknown }).addBalanceEtisalatWalletNumber;
-        const s = raw != null ? String(raw).trim() : "";
-        return s.length > 0 ? s.slice(0, 80) : null;
-      })(),
       addBalanceConfirmationNote:
         (c.addBalanceConfirmationNote as string) ??
         HOMEPAGE_DEFAULTS.addBalanceConfirmationNote,
@@ -1958,8 +2121,14 @@ async function getHomepageSettingsUncached(): Promise<HomepageSetting> {
   }
 }
 
+const getHomepageSettingsCrossRequest = unstable_cache(
+  getHomepageSettingsUncached,
+  ["homepage-settings"],
+  { revalidate: 60, tags: ["homepage-settings"] },
+);
+
 /** نفس الطلب (layout + metadata + الصفحة) يقرأ الإعدادات مرة واحدة فقط */
-export const getHomepageSettings = cache(getHomepageSettingsUncached);
+export const getHomepageSettings = cache(async () => getHomepageSettingsCrossRequest());
 
 function pickReviewsSectionString(
   row: Record<string, unknown>,
@@ -2070,12 +2239,6 @@ export async function updateHomepageSettings(data: {
   add_balance_transfer_instruction?: string | null;
   add_balance_transfer_instruction_en?: string | null;
   add_balance_wallet_number?: string | null;
-  add_balance_instapay_method_title?: string | null;
-  add_balance_instapay_method_title_en?: string | null;
-  add_balance_instapay_wallet_number?: string | null;
-  add_balance_etisalat_method_title?: string | null;
-  add_balance_etisalat_method_title_en?: string | null;
-  add_balance_etisalat_wallet_number?: string | null;
   add_balance_confirmation_note?: string | null;
   add_balance_confirmation_note_en?: string | null;
   add_balance_whatsapp_number?: string | null;
@@ -2447,24 +2610,6 @@ export async function updateHomepageSettings(data: {
   if (data.add_balance_wallet_number !== undefined) {
     await sql`UPDATE "HomepageSetting" SET add_balance_wallet_number = ${data.add_balance_wallet_number}, updated_at = NOW() WHERE id = 'default'`;
   }
-  if (data.add_balance_instapay_method_title !== undefined) {
-    await sql`UPDATE "HomepageSetting" SET add_balance_instapay_method_title = ${data.add_balance_instapay_method_title}, updated_at = NOW() WHERE id = 'default'`;
-  }
-  if (data.add_balance_instapay_method_title_en !== undefined) {
-    await sql`UPDATE "HomepageSetting" SET add_balance_instapay_method_title_en = ${data.add_balance_instapay_method_title_en}, updated_at = NOW() WHERE id = 'default'`;
-  }
-  if (data.add_balance_instapay_wallet_number !== undefined) {
-    await sql`UPDATE "HomepageSetting" SET add_balance_instapay_wallet_number = ${data.add_balance_instapay_wallet_number}, updated_at = NOW() WHERE id = 'default'`;
-  }
-  if (data.add_balance_etisalat_method_title !== undefined) {
-    await sql`UPDATE "HomepageSetting" SET add_balance_etisalat_method_title = ${data.add_balance_etisalat_method_title}, updated_at = NOW() WHERE id = 'default'`;
-  }
-  if (data.add_balance_etisalat_method_title_en !== undefined) {
-    await sql`UPDATE "HomepageSetting" SET add_balance_etisalat_method_title_en = ${data.add_balance_etisalat_method_title_en}, updated_at = NOW() WHERE id = 'default'`;
-  }
-  if (data.add_balance_etisalat_wallet_number !== undefined) {
-    await sql`UPDATE "HomepageSetting" SET add_balance_etisalat_wallet_number = ${data.add_balance_etisalat_wallet_number}, updated_at = NOW() WHERE id = 'default'`;
-  }
   if (data.add_balance_confirmation_note !== undefined) {
     await sql`UPDATE "HomepageSetting" SET add_balance_confirmation_note = ${data.add_balance_confirmation_note}, updated_at = NOW() WHERE id = 'default'`;
   }
@@ -2513,6 +2658,7 @@ async function ensurePlatformSubscriptionSchema(): Promise<void> {
         CONSTRAINT subscription_plan_duration_chk CHECK (duration_kind IN ('week', 'month', 'year'))
       )
     `;
+    await sql`ALTER TABLE "SubscriptionPlan" ADD COLUMN IF NOT EXISTS category_id TEXT`;
     await sql`
       CREATE TABLE IF NOT EXISTS "UserPlatformSubscription" (
         id TEXT PRIMARY KEY,
@@ -2970,9 +3116,42 @@ export type SubscriptionPlanPublic = {
   imageUrl: string | null;
   durationKind: SubscriptionDurationKind;
   price: number;
+  categoryId: string | null;
+  categoryName: string | null;
 };
 
 export type SubscriptionPlanAdmin = SubscriptionPlanPublic & { isActive: boolean };
+
+export type ActivePlatformSubscription = {
+  planId: string;
+  categoryId: string | null;
+  expiresAt: Date;
+};
+
+function mapSubscriptionPlanRow(r: Record<string, unknown>): SubscriptionPlanPublic {
+  const cat = r.category_id ?? r.cat_id;
+  const catName = r.cat_name_ar ?? r.cat_name;
+  return {
+    id: String(r.id),
+    name: String(r.name ?? ""),
+    description: String(r.description ?? ""),
+    imageUrl: r.image_url ? String(r.image_url) : null,
+    durationKind: String(r.duration_kind) as SubscriptionDurationKind,
+    price: Number(r.price ?? 0),
+    categoryId: cat != null && String(cat).trim() ? String(cat) : null,
+    categoryName: catName != null && String(catName).trim() ? String(catName) : null,
+  };
+}
+
+function courseCategoryIdFromRow(course: Record<string, unknown>): string | null {
+  const raw =
+    course.categoryId ??
+    course.category_id ??
+    (course.category as { id?: string } | undefined)?.id ??
+    null;
+  const id = raw != null ? String(raw).trim() : "";
+  return id || null;
+}
 
 function addSubscriptionDuration(from: Date, kind: SubscriptionDurationKind): Date {
   const d = new Date(from.getTime());
@@ -2985,20 +3164,16 @@ function addSubscriptionDuration(from: Date, kind: SubscriptionDurationKind): Da
 export async function listActiveSubscriptionPlansPublic(): Promise<SubscriptionPlanPublic[]> {
   try {
     await ensurePlatformSubscriptionSchema();
+    await ensureCategoryCreatedByColumn();
     const rows = await sql`
-      SELECT id, name, description, image_url, duration_kind, price
-      FROM "SubscriptionPlan"
-      WHERE is_active = true
-      ORDER BY created_at DESC
+      SELECT sp.id, sp.name, sp.description, sp.image_url, sp.duration_kind, sp.price,
+        sp.category_id, cat.name_ar AS cat_name_ar, cat.name AS cat_name
+      FROM "SubscriptionPlan" sp
+      LEFT JOIN "Category" cat ON cat.id = sp.category_id
+      WHERE sp.is_active = true
+      ORDER BY sp.created_at DESC
     `;
-    return (rows as Record<string, unknown>[]).map((r) => ({
-      id: String(r.id),
-      name: String(r.name ?? ""),
-      description: String(r.description ?? ""),
-      imageUrl: r.image_url ? String(r.image_url) : null,
-      durationKind: String(r.duration_kind) as SubscriptionDurationKind,
-      price: Number(r.price ?? 0),
-    }));
+    return (rows as Record<string, unknown>[]).map(mapSubscriptionPlanRow);
   } catch {
     return [];
   }
@@ -3006,20 +3181,18 @@ export async function listActiveSubscriptionPlansPublic(): Promise<SubscriptionP
 
 export async function listSubscriptionPlansAll(): Promise<SubscriptionPlanAdmin[]> {
   await ensurePlatformSubscriptionSchema();
-    const rows = await sql`
-      SELECT id, name, description, image_url, duration_kind, price, is_active
-      FROM "SubscriptionPlan"
-      ORDER BY created_at DESC
-    `;
-    return (rows as Record<string, unknown>[]).map((r) => ({
-      id: String(r.id),
-      name: String(r.name ?? ""),
-      description: String(r.description ?? ""),
-      imageUrl: r.image_url ? String(r.image_url) : null,
-      durationKind: String(r.duration_kind) as SubscriptionDurationKind,
-      price: Number(r.price ?? 0),
-      isActive: Boolean(r.is_active),
-    }));
+  await ensureCategoryCreatedByColumn();
+  const rows = await sql`
+    SELECT sp.id, sp.name, sp.description, sp.image_url, sp.duration_kind, sp.price, sp.is_active,
+      sp.category_id, cat.name_ar AS cat_name_ar, cat.name AS cat_name
+    FROM "SubscriptionPlan" sp
+    LEFT JOIN "Category" cat ON cat.id = sp.category_id
+    ORDER BY sp.created_at DESC
+  `;
+  return (rows as Record<string, unknown>[]).map((r) => ({
+    ...mapSubscriptionPlanRow(r),
+    isActive: Boolean(r.is_active),
+  }));
 }
 
 export async function createSubscriptionPlan(data: {
@@ -3029,13 +3202,18 @@ export async function createSubscriptionPlan(data: {
   duration_kind: SubscriptionDurationKind;
   price: number;
   is_active?: boolean;
+  category_id: string;
 }): Promise<{ id: string }> {
   await ensurePlatformSubscriptionSchema();
+  const categoryId = data.category_id?.trim();
+  if (!categoryId) throw new Error("يجب اختيار قسم للباقة");
+  const category = await getCategoryById(categoryId);
+  if (!category) throw new Error("القسم المحدد غير موجود");
   const id = generateId();
   const dk = data.duration_kind;
   if (dk !== "week" && dk !== "month" && dk !== "year") throw new Error("مدة غير صالحة");
   await sql`
-    INSERT INTO "SubscriptionPlan" (id, name, description, image_url, duration_kind, price, is_active, sort_order)
+    INSERT INTO "SubscriptionPlan" (id, name, description, image_url, duration_kind, price, is_active, sort_order, category_id)
     VALUES (
       ${id},
       ${data.name.trim()},
@@ -3044,7 +3222,8 @@ export async function createSubscriptionPlan(data: {
       ${dk},
       ${Math.max(0, data.price)},
       ${data.is_active !== false},
-      0
+      0,
+      ${categoryId}
     )
   `;
   return { id };
@@ -3059,6 +3238,7 @@ export async function updateSubscriptionPlan(
     duration_kind?: SubscriptionDurationKind;
     price?: number;
     is_active?: boolean;
+    category_id?: string;
   },
 ): Promise<void> {
   await ensurePlatformSubscriptionSchema();
@@ -3074,6 +3254,13 @@ export async function updateSubscriptionPlan(
   }
   if (data.price !== undefined) await sql`UPDATE "SubscriptionPlan" SET price = ${Math.max(0, data.price)}, updated_at = NOW() WHERE id = ${id}`;
   if (data.is_active !== undefined) await sql`UPDATE "SubscriptionPlan" SET is_active = ${data.is_active}, updated_at = NOW() WHERE id = ${id}`;
+  if (data.category_id !== undefined) {
+    const categoryId = data.category_id.trim();
+    if (!categoryId) throw new Error("يجب اختيار قسم للباقة");
+    const category = await getCategoryById(categoryId);
+    if (!category) throw new Error("القسم المحدد غير موجود");
+    await sql`UPDATE "SubscriptionPlan" SET category_id = ${categoryId}, updated_at = NOW() WHERE id = ${id}`;
+  }
 }
 
 export async function deleteSubscriptionPlan(id: string): Promise<void> {
@@ -3089,11 +3276,13 @@ export async function getSubscriptionPlanById(id: string): Promise<{
   duration_kind: SubscriptionDurationKind;
   price: number;
   is_active: boolean;
+  category_id: string | null;
 } | null> {
   await ensurePlatformSubscriptionSchema();
   const rows = await sql`SELECT * FROM "SubscriptionPlan" WHERE id = ${id} LIMIT 1`;
   const r = rows[0] as Record<string, unknown> | undefined;
   if (!r) return null;
+  const categoryId = r.category_id != null && String(r.category_id).trim() ? String(r.category_id) : null;
   return {
     id: String(r.id),
     name: String(r.name ?? ""),
@@ -3102,7 +3291,53 @@ export async function getSubscriptionPlanById(id: string): Promise<{
     duration_kind: String(r.duration_kind) as SubscriptionDurationKind,
     price: Number(r.price ?? 0),
     is_active: Boolean(r.is_active),
+    category_id: categoryId,
   };
+}
+
+export async function listActivePlatformSubscriptionsForUser(
+  userId: string,
+): Promise<ActivePlatformSubscription[]> {
+  try {
+    await ensurePlatformSubscriptionSchema();
+    const rows = await sql`
+      SELECT ups.plan_id, ups.expires_at, sp.category_id
+      FROM "UserPlatformSubscription" ups
+      LEFT JOIN "SubscriptionPlan" sp ON sp.id = ups.plan_id
+      WHERE ups.user_id = ${userId} AND ups.expires_at > NOW()
+      ORDER BY ups.expires_at DESC
+    `;
+    return (rows as Record<string, unknown>[]).map((r) => {
+      const expRaw = r.expires_at;
+      const expiresAt = expRaw instanceof Date ? expRaw : new Date(String(expRaw));
+      const categoryId =
+        r.category_id != null && String(r.category_id).trim() ? String(r.category_id) : null;
+      return {
+        planId: String(r.plan_id ?? ""),
+        categoryId,
+        expiresAt,
+      };
+    });
+  } catch {
+    return [];
+  }
+}
+
+function subscriptionCategoryMatches(
+  planCategoryId: string | null,
+  targetCategoryId: string | null,
+): boolean {
+  if (planCategoryId == null) return true;
+  return !!targetCategoryId && planCategoryId === targetCategoryId;
+}
+
+export async function userHasActiveSubscriptionForCategory(
+  userId: string,
+  categoryId: string | null,
+): Promise<{ active: boolean; expiresAt: Date | null }> {
+  const subs = await listActivePlatformSubscriptionsForUser(userId);
+  const match = subs.find((s) => subscriptionCategoryMatches(s.categoryId, categoryId));
+  return match ? { active: true, expiresAt: match.expiresAt } : { active: false, expiresAt: null };
 }
 
 /** هل للمستخدم اشتراك منصة نشط (أي وقت انتهاء في المستقبل) */
@@ -3120,16 +3355,19 @@ export async function userHasActivePlatformSubscription(userId: string): Promise
   }
 }
 
-/** اشتراك نشط + دورة منشورة + سعرها > 0 ⇒ وصول كامل كمسجّل */
+/** اشتراك نشط + دورة منشورة + سعرها > 0 + قسم الدورة يطابق قسم الباقة */
 export async function userHasActivePlatformSubscriptionForPaidCourse(userId: string, courseId: string): Promise<boolean> {
-  const active = await userHasActivePlatformSubscription(userId);
-  if (!active) return false;
+  const subs = await listActivePlatformSubscriptionsForUser(userId);
+  if (subs.length === 0) return false;
   const course = await getCourseById(courseId);
   if (!course) return false;
-  const pub = (course as { isPublished?: boolean }).isPublished ?? (course as { is_published?: boolean }).is_published;
+  const courseRow = course as unknown as Record<string, unknown>;
+  const pub = courseRow.isPublished ?? courseRow.is_published;
   if (!pub) return false;
-  const price = Number((course as { price?: unknown }).price) || 0;
-  return price > 0;
+  const price = Number(courseRow.price) || 0;
+  if (price <= 0) return false;
+  const courseCategoryId = courseCategoryIdFromRow(courseRow);
+  return subs.some((sub) => subscriptionCategoryMatches(sub.categoryId, courseCategoryId));
 }
 
 /** تسجيل في الدورة أو اشتراك منصة نشط على دورة مدفوعة منشورة */
@@ -3158,18 +3396,20 @@ export async function purchasePlatformSubscription(userId: string, planId: strin
   await ensurePlatformSubscriptionSchema();
   const plan = await getSubscriptionPlanById(planId);
   if (!plan || !plan.is_active) throw new Error("الباقة غير متاحة");
+  if (!plan.category_id) throw new Error("الباقة غير مكتملة الإعداد — حدّد القسم من لوحة التحكم");
   const price = plan.price;
   const user = await getUserById(userId);
   if (!user) throw new Error("المستخدم غير موجود");
   if (user.role !== "STUDENT") throw new Error("الاشتراك متاح للطلاب فقط");
 
-  if (await userHasActivePlatformSubscription(userId)) {
-    const exp = await getLatestPlatformSubscriptionExpiry(userId);
+  const existingSub = await userHasActiveSubscriptionForCategory(userId, plan.category_id);
+  if (existingSub.active) {
+    const exp = existingSub.expiresAt;
     const expLine = exp
-      ? `ينتهي اشتراكك الحالي في ${new Intl.DateTimeFormat("ar-EG", { dateStyle: "medium", timeStyle: "short" }).format(exp)}. `
+      ? `لديك اشتراك نشط لهذا القسم حتى ${new Intl.DateTimeFormat("ar-EG", { dateStyle: "medium", timeStyle: "short" }).format(exp)}. `
       : "";
     throw new Error(
-      `${expLine}أنت مشترك في المنصة بالفعل ولا تحتاج لدفع مرة أخرى إلا بعد انتهاء هذه المدة.`,
+      `${expLine}لا تحتاج لشراء هذه الباقة مرة أخرى إلا بعد انتهاء الاشتراك الحالي لنفس القسم.`,
     );
   }
 
@@ -3216,12 +3456,16 @@ export async function listUserPlatformSubscriptionsForAdmin(): Promise<PlatformS
         u.email AS user_email,
         ups.plan_id,
         sp.name AS plan_name,
+        sp.category_id AS plan_category_id,
+        cat.name_ar AS plan_category_name_ar,
+        cat.name AS plan_category_name,
         ups.price_paid,
         ups.expires_at,
         ups.created_at
       FROM "UserPlatformSubscription" ups
       JOIN "User" u ON u.id = ups.user_id
       LEFT JOIN "SubscriptionPlan" sp ON sp.id = ups.plan_id
+      LEFT JOIN "Category" cat ON cat.id = sp.category_id
       ORDER BY ups.expires_at DESC, ups.created_at DESC
     `;
     const now = Date.now();
@@ -3261,22 +3505,40 @@ export async function deleteUserPlatformSubscriptionById(id: string): Promise<vo
 }
 
 let lessonRatingsSchemaAvailable = true;
+let lessonRatingsUseChapterTable = false;
 
 async function ensureLessonRatingsSchema(): Promise<void> {
   return ensureOnce("ensureLessonRatingsSchema", async () => {
+    const legacy = (await detectSchemaMode(sql)) === "legacy";
+    lessonRatingsUseChapterTable = legacy;
     try {
-      await sql`
-        CREATE TABLE IF NOT EXISTS "LessonRating" (
-          id TEXT PRIMARY KEY,
-          lesson_id TEXT NOT NULL REFERENCES "Lesson"(id) ON DELETE CASCADE,
-          user_id TEXT NOT NULL REFERENCES "User"(id) ON DELETE CASCADE,
-          course_id TEXT NOT NULL REFERENCES "Course"(id) ON DELETE CASCADE,
-          rating INTEGER NOT NULL CHECK (rating BETWEEN 1 AND 5),
-          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-          CONSTRAINT lesson_rating_unique_lesson_user UNIQUE (lesson_id, user_id)
-        )
-      `;
+      if (legacy) {
+        await sql`
+          CREATE TABLE IF NOT EXISTS "LessonRating" (
+            id TEXT PRIMARY KEY,
+            lesson_id TEXT NOT NULL REFERENCES "Chapter"(id) ON DELETE CASCADE,
+            user_id TEXT NOT NULL REFERENCES "User"(id) ON DELETE CASCADE,
+            course_id TEXT NOT NULL REFERENCES "Course"(id) ON DELETE CASCADE,
+            rating INTEGER NOT NULL CHECK (rating BETWEEN 1 AND 5),
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            CONSTRAINT lesson_rating_unique_lesson_user UNIQUE (lesson_id, user_id)
+          )
+        `;
+      } else {
+        await sql`
+          CREATE TABLE IF NOT EXISTS "LessonRating" (
+            id TEXT PRIMARY KEY,
+            lesson_id TEXT NOT NULL REFERENCES "Lesson"(id) ON DELETE CASCADE,
+            user_id TEXT NOT NULL REFERENCES "User"(id) ON DELETE CASCADE,
+            course_id TEXT NOT NULL REFERENCES "Course"(id) ON DELETE CASCADE,
+            rating INTEGER NOT NULL CHECK (rating BETWEEN 1 AND 5),
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            CONSTRAINT lesson_rating_unique_lesson_user UNIQUE (lesson_id, user_id)
+          )
+        `;
+      }
       await sql`CREATE INDEX IF NOT EXISTS "LessonRating_lesson_id_idx" ON "LessonRating"(lesson_id)`;
       await sql`CREATE INDEX IF NOT EXISTS "LessonRating_course_id_idx" ON "LessonRating"(course_id)`;
       await sql`CREATE INDEX IF NOT EXISTS "LessonRating_user_id_idx" ON "LessonRating"(user_id)`;
@@ -3296,6 +3558,22 @@ function courseRatingSelectSql() {
   if (!lessonRatingsSchemaAvailable) {
     return sql`NULL::numeric AS course_rating, 0::int AS course_rating_count`;
   }
+  if (lessonRatingsUseChapterTable) {
+    return sql`
+      (
+        SELECT ROUND(AVG(lr.rating)::numeric, 2)
+        FROM "LessonRating" lr
+        JOIN "Chapter" ch ON ch.id = lr.lesson_id
+        WHERE ch."courseId" = c.id
+      ) AS course_rating,
+      (
+        SELECT COUNT(*)::int
+        FROM "LessonRating" lr
+        JOIN "Chapter" ch ON ch.id = lr.lesson_id
+        WHERE ch."courseId" = c.id
+      ) AS course_rating_count
+    `;
+  }
   return sql`
     (
       SELECT ROUND(AVG(lr.rating)::numeric, 2)
@@ -3314,6 +3592,17 @@ function courseRatingSelectSql() {
 
 export async function getCourseBySlug(slug: string): Promise<(Course & { category?: Category }) | null> {
   await ensureLessonRatingsSchema();
+  if ((await detectSchemaMode(sql)) === "legacy") {
+    const rows = await sql`
+      SELECT c.*
+      FROM "Course" c
+      WHERE c.id = ${slug} AND c."isPublished" = true
+      LIMIT 1
+    `;
+    const r = rows[0] as Record<string, unknown> | undefined;
+    if (!r) return null;
+    return mapLegacyCourseRow(r) as Course & { category?: Category };
+  }
   const rows = await sql`
     SELECT c.*, ${courseRatingSelectSql()}, cat.id as cat_id, cat.name as cat_name, cat.name_ar as cat_name_ar, cat.slug as cat_slug
     FROM "Course" c
@@ -3339,14 +3628,20 @@ export async function getCourseById(id: string): Promise<Course | null> {
     WHERE c.id = ${id}
     LIMIT 1
   `;
-  return rowToCamel(rows[0] as Record<string, unknown>) as Course | null;
+  const row = rows[0] as Record<string, unknown> | undefined;
+  if (!row) return null;
+  if ((await detectSchemaMode(sql)) === "legacy") return mapLegacyCourseRow(row);
+  return rowToCamel(row) as Course | null;
 }
 
 export async function getCourseBySlugOrId(slugOrId: string): Promise<Course | null> {
-  if (/^c[a-z0-9]{24}$/i.test(slugOrId)) {
+  if (isCourseSegmentId(slugOrId)) {
     return getCourseById(slugOrId);
   }
   await ensureLessonRatingsSchema();
+  if ((await detectSchemaMode(sql)) === "legacy") {
+    return getCourseById(slugOrId);
+  }
   const rows = await sql`
     SELECT c.*, ${courseRatingSelectSql()}
     FROM "Course" c
@@ -3358,6 +3653,16 @@ export async function getCourseBySlugOrId(slugOrId: string): Promise<Course | nu
 
 export async function getCoursesPublished(withCategory = true): Promise<(Course & { category?: Category })[]> {
   await ensureLessonRatingsSchema();
+  await ensureCourseAssignedTeacherColumn();
+  if ((await detectSchemaMode(sql)) === "legacy") {
+    const rows = await sql`
+      SELECT c.*
+      FROM "Course" c
+      WHERE c."isPublished" = true
+      ORDER BY c."createdAt" DESC
+    `;
+    return (rows as Record<string, unknown>[]).map((r) => mapLegacyCourseRow(r)) as (Course & { category?: Category })[];
+  }
   if (!withCategory) {
     const rows = await sql`
       SELECT c.*, ${courseRatingSelectSql()}
@@ -3389,15 +3694,20 @@ export async function getPublishedCourseSlugsByIds(ids: string[]): Promise<Map<s
   const uniq = [...new Set(ids.map((id) => String(id).trim()).filter(Boolean))];
   const map = new Map<string, string>();
   if (uniq.length === 0) return map;
-  const results = await Promise.all(
-    uniq.map((id) =>
-      sql`SELECT id, slug FROM "Course" WHERE id = ${id} AND is_published = true LIMIT 1`,
-    ),
-  );
-  for (const rows of results) {
-    const r = rows[0] as { id?: unknown; slug?: unknown } | undefined;
-    if (r?.id != null && r?.slug != null) {
-      map.set(String(r.id), String(r.slug));
+  if ((await detectSchemaMode(sql)) === "legacy") {
+    for (const id of uniq) {
+      const rows = await sql`SELECT id FROM "Course" WHERE id = ${id} AND "isPublished" = true LIMIT 1`;
+      if (rows[0]) map.set(id, id);
+    }
+    return map;
+  }
+  const rows = await sql`
+    SELECT id, slug FROM "Course"
+    WHERE id = ANY(${uniq}::text[]) AND is_published = true
+  `;
+  for (const row of rows as Array<{ id?: unknown; slug?: unknown }>) {
+    if (row.id != null && row.slug != null) {
+      map.set(String(row.id), String(row.slug));
     }
   }
   return map;
@@ -3409,18 +3719,54 @@ export async function getCoursesWithCounts(): Promise<
       lessonsCount: number;
       enrollmentsCount: number;
       category?: { id: string; name: string; nameAr?: string | null; slug: string } | null;
+      teacher?: { id: string; name: string | null; email: string | null; role: string } | null;
     }
   >
 > {
   await ensureLessonRatingsSchema();
+  await ensureCourseAssignedTeacherColumn();
+  if ((await detectSchemaMode(sql)) === "legacy") {
+    const rows = await sql`
+      SELECT c.*,
+        u.id as teacher_id, u."fullName" as teacher_name, u.email as teacher_email, u.role as teacher_role,
+        (SELECT COUNT(*)::int FROM "Chapter" WHERE "courseId" = c.id) as lessons_count,
+        (SELECT COUNT(*)::int FROM "Purchase" WHERE "courseId" = c.id AND status = 'ACTIVE') as enrollments_count
+      FROM "Course" c
+      LEFT JOIN "User" u ON u.id = COALESCE(c.created_by_id, c."userId")
+      ORDER BY c."createdAt" DESC
+    `;
+    return (rows as Record<string, unknown>[]).map((r) => {
+      const teacherId = r.teacher_id != null ? String(r.teacher_id) : null;
+      const teacherRole = r.teacher_role != null ? String(r.teacher_role) : null;
+      const teacher =
+        teacherId && teacherRole === "TEACHER"
+          ? {
+              id: teacherId,
+              name: r.teacher_name != null ? String(r.teacher_name) : null,
+              email: r.teacher_email != null ? String(r.teacher_email) : null,
+              role: teacherRole,
+            }
+          : null;
+      const { teacher_id, teacher_name, teacher_email, teacher_role, ...courseRow } = r;
+      return {
+        ...mapLegacyCourseRow(courseRow),
+        lessonsCount: Number((r as { lessons_count?: number }).lessons_count ?? 0),
+        enrollmentsCount: Number((r as { enrollments_count?: number }).enrollments_count ?? 0),
+        category: null,
+        teacher,
+      };
+    });
+  }
   const rows = await sql`
     SELECT c.*,
       ${courseRatingSelectSql()},
       (SELECT COUNT(*)::int FROM "Lesson" WHERE course_id = c.id) as lessons_count,
       (SELECT COUNT(*)::int FROM "Enrollment" WHERE course_id = c.id) as enrollments_count,
-      cat.id as cat_id, cat.name as cat_name, cat.name_ar as cat_name_ar, cat.slug as cat_slug, cat."order" as cat_order
+      cat.id as cat_id, cat.name as cat_name, cat.name_ar as cat_name_ar, cat.slug as cat_slug, cat."order" as cat_order,
+      u.id as teacher_id, u.name as teacher_name, u.email as teacher_email, u.role as teacher_role
     FROM "Course" c
     LEFT JOIN "Category" cat ON c.category_id = cat.id
+    LEFT JOIN "User" u ON u.id = COALESCE(c.assigned_teacher_id, c.created_by_id)
     ORDER BY cat."order" ASC NULLS LAST, c."order" ASC, c.created_at DESC
   `;
   return (rows as Record<string, unknown>[]).map((r) => {
@@ -3428,18 +3774,31 @@ export async function getCoursesWithCounts(): Promise<
       r.cat_id != null
         ? rowToCamel({ id: r.cat_id, name: r.cat_name, name_ar: r.cat_name_ar, slug: r.cat_slug })
         : null;
-    const { cat_id, cat_name, cat_name_ar, cat_slug, cat_order, ...rest } = r;
+    const teacherId = r.teacher_id != null ? String(r.teacher_id) : null;
+    const teacherRole = r.teacher_role != null ? String(r.teacher_role) : null;
+    const teacher =
+      teacherId && teacherRole === "TEACHER"
+        ? {
+            id: teacherId,
+            name: r.teacher_name != null ? String(r.teacher_name) : null,
+            email: r.teacher_email != null ? String(r.teacher_email) : null,
+            role: teacherRole,
+          }
+        : null;
+    const { cat_id, cat_name, cat_name_ar, cat_slug, cat_order, teacher_id, teacher_name, teacher_email, teacher_role, ...rest } = r;
     return {
       ...rowToCamel(rest),
       lessonsCount: Number((r as { lessons_count?: number }).lessons_count ?? 0),
       enrollmentsCount: Number((r as { enrollments_count?: number }).enrollments_count ?? 0),
       category: category as { id: string; name: string; nameAr?: string | null; slug: string } | null,
+      teacher,
     };
   }) as Array<
     Record<string, unknown> & {
       lessonsCount: number;
       enrollmentsCount: number;
       category?: { id: string; name: string; nameAr?: string | null; slug: string } | null;
+      teacher?: { id: string; name: string | null; email: string | null; role: string } | null;
     }
   >;
 }
@@ -3457,6 +3816,23 @@ export async function getCoursesWithCountsForCreator(
   >
 > {
   await ensureLessonRatingsSchema();
+  await ensureCourseAssignedTeacherColumn();
+  if ((await detectSchemaMode(sql)) === "legacy") {
+    const rows = await sql`
+      SELECT c.*,
+        (SELECT COUNT(*)::int FROM "Chapter" WHERE "courseId" = c.id) as lessons_count,
+        (SELECT COUNT(*)::int FROM "Purchase" WHERE "courseId" = c.id AND status = 'ACTIVE') as enrollments_count
+      FROM "Course" c
+      WHERE c."userId" = ${creatorId}
+      ORDER BY c."createdAt" DESC
+    `;
+    return (rows as Record<string, unknown>[]).map((r) => ({
+      ...mapLegacyCourseRow(r),
+      lessonsCount: Number((r as { lessons_count?: number }).lessons_count ?? 0),
+      enrollmentsCount: Number((r as { enrollments_count?: number }).enrollments_count ?? 0),
+      category: null,
+    }));
+  }
   const rows = await sql`
     SELECT c.*,
       ${courseRatingSelectSql()},
@@ -3465,7 +3841,7 @@ export async function getCoursesWithCountsForCreator(
       cat.id as cat_id, cat.name as cat_name, cat.name_ar as cat_name_ar, cat.slug as cat_slug, cat."order" as cat_order
     FROM "Course" c
     LEFT JOIN "Category" cat ON c.category_id = cat.id
-    WHERE c.created_by_id = ${creatorId}
+    WHERE c.created_by_id = ${creatorId} OR c.assigned_teacher_id = ${creatorId}
     ORDER BY cat."order" ASC NULLS LAST, c."order" ASC, c.created_at DESC
   `;
   return (rows as Record<string, unknown>[]).map((r) => {
@@ -3491,6 +3867,10 @@ export async function getCoursesWithCountsForCreator(
 
 export async function getCoursesAll(): Promise<(Course & { category?: Category })[]> {
   await ensureLessonRatingsSchema();
+  if ((await detectSchemaMode(sql)) === "legacy") {
+    const rows = await sql`SELECT c.* FROM "Course" c ORDER BY c."createdAt" DESC`;
+    return (rows as Record<string, unknown>[]).map((r) => mapLegacyCourseRow(r)) as (Course & { category?: Category })[];
+  }
   const rows = await sql`
     SELECT c.*, ${courseRatingSelectSql()}, cat.id as cat_id, cat.name as cat_name, cat.name_ar as cat_name_ar, cat.slug as cat_slug
     FROM "Course" c
@@ -3508,6 +3888,10 @@ export async function getCoursesAll(): Promise<(Course & { category?: Category }
 }
 
 export async function courseExistsBySlug(slug: string): Promise<boolean> {
+  if ((await detectSchemaMode(sql)) === "legacy") {
+    const rows = await sql`SELECT id FROM "Course" WHERE id = ${slug} LIMIT 1`;
+    return rows.length > 0;
+  }
   const rows = await sql`SELECT id FROM "Course" WHERE slug = ${slug} LIMIT 1`;
   return rows.length > 0;
 }
@@ -3521,6 +3905,67 @@ async function ensureCourseBilingualColumns(): Promise<void> {
       /* DDL may be unavailable */
     }
   });
+}
+
+async function ensureCourseAssignedTeacherColumn(): Promise<void> {
+  return ensureOnce("ensureCourseAssignedTeacherColumn_v2", async () => {
+    try {
+      await sql`ALTER TABLE "Course" ADD COLUMN IF NOT EXISTS assigned_teacher_id TEXT REFERENCES "User"(id) ON DELETE SET NULL`;
+    } catch {
+      try {
+        await sql`ALTER TABLE "Course" ADD COLUMN IF NOT EXISTS assigned_teacher_id TEXT`;
+      } catch {
+        /* DDL may be unavailable */
+      }
+    }
+    await repairAdminAssignedCourseOwnership();
+  });
+}
+
+/** يصلح دورات أُسندت للمدرس عبر created_by_id قبل وجود assigned_teacher_id */
+async function repairAdminAssignedCourseOwnership(): Promise<void> {
+  try {
+    const adminRows = await sql`
+      SELECT id FROM "User"
+      WHERE role IN ('ADMIN', 'ASSISTANT_ADMIN')
+      ORDER BY created_at ASC
+      LIMIT 1
+    `;
+    const adminRow = adminRows[0] as { id?: unknown } | undefined;
+    const adminId = adminRow?.id != null ? String(adminRow.id) : null;
+    if (!adminId) return;
+
+    await sql`
+      UPDATE "Course" c
+      SET created_by_id = ${adminId}, updated_at = NOW()
+      WHERE c.assigned_teacher_id IS NOT NULL
+        AND c.created_by_id IN (SELECT id FROM "User" WHERE role = 'TEACHER')
+    `;
+
+    await sql`
+      UPDATE "Course" c
+      SET
+        assigned_teacher_id = c.created_by_id,
+        created_by_id = ${adminId},
+        updated_at = NOW()
+      WHERE c.assigned_teacher_id IS NULL
+        AND c.created_by_id IN (SELECT id FROM "User" WHERE role = 'TEACHER')
+        AND (
+          c.category_id IS NULL
+          OR EXISTS (
+            SELECT 1 FROM "Category" cat
+            WHERE cat.id = c.category_id AND cat.created_by_id IS NULL
+          )
+        )
+    `;
+  } catch {
+    /* repair is best-effort */
+  }
+}
+
+export async function ensureCourseSchema(): Promise<void> {
+  await ensureCourseBilingualColumns();
+  await ensureCourseAssignedTeacherColumn();
 }
 
 export async function createCourse(data: {
@@ -3538,21 +3983,35 @@ export async function createCourse(data: {
   max_quiz_attempts?: number | null;
   category_id?: string | null;
   accepts_homework?: boolean;
+  assigned_teacher_id?: string | null;
 }): Promise<Course> {
-  await ensureCourseBilingualColumns();
+  await ensureCourseSchema();
   const id = generateId();
   const catId = data.category_id ?? null;
   const acceptsHomework = data.accepts_homework ?? false;
+  const assignedTeacherId = data.assigned_teacher_id ?? null;
   let rows: Record<string, unknown>[];
   try {
     rows = await sql`
-      INSERT INTO "Course" (id, title, title_ar, slug, description, description_en, short_desc, short_desc_en, image_url, price, is_published, created_by_id, max_quiz_attempts, category_id, accepts_homework)
-      VALUES (${id}, ${data.title}, ${data.title_ar}, ${data.slug}, ${data.description}, ${data.description_en ?? null}, ${data.short_desc ?? null}, ${data.short_desc_en ?? null}, ${data.image_url ?? null}, ${data.price}, ${data.is_published}, ${data.created_by_id}, ${data.max_quiz_attempts ?? null}, ${catId}, ${acceptsHomework})
+      INSERT INTO "Course" (id, title, title_ar, slug, description, description_en, short_desc, short_desc_en, image_url, price, is_published, created_by_id, assigned_teacher_id, max_quiz_attempts, category_id, accepts_homework)
+      VALUES (${id}, ${data.title}, ${data.title_ar}, ${data.slug}, ${data.description}, ${data.description_en ?? null}, ${data.short_desc ?? null}, ${data.short_desc_en ?? null}, ${data.image_url ?? null}, ${data.price}, ${data.is_published}, ${data.created_by_id}, ${assignedTeacherId}, ${data.max_quiz_attempts ?? null}, ${catId}, ${acceptsHomework})
       RETURNING *
     `;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    if (msg.includes("description_en") || msg.includes("short_desc_en")) {
+    if (msg.includes("assigned_teacher_id")) {
+      rows = await sql`
+        INSERT INTO "Course" (id, title, title_ar, slug, description, description_en, short_desc, short_desc_en, image_url, price, is_published, created_by_id, max_quiz_attempts, category_id, accepts_homework)
+        VALUES (${id}, ${data.title}, ${data.title_ar}, ${data.slug}, ${data.description}, ${data.description_en ?? null}, ${data.short_desc ?? null}, ${data.short_desc_en ?? null}, ${data.image_url ?? null}, ${data.price}, ${data.is_published}, ${data.created_by_id}, ${data.max_quiz_attempts ?? null}, ${catId}, ${acceptsHomework})
+        RETURNING *
+      `;
+      if (assignedTeacherId) {
+        await ensureCourseAssignedTeacherColumn();
+        await sql`UPDATE "Course" SET assigned_teacher_id = ${assignedTeacherId} WHERE id = ${id}`;
+        const updated = await sql`SELECT * FROM "Course" WHERE id = ${id} LIMIT 1`;
+        rows = updated as Record<string, unknown>[];
+      }
+    } else if (msg.includes("description_en") || msg.includes("short_desc_en")) {
       rows = await sql`
         INSERT INTO "Course" (id, title, title_ar, slug, description, description_en, short_desc, short_desc_en, image_url, price, is_published, created_by_id, max_quiz_attempts, category_id, accepts_homework)
         VALUES (${id}, ${data.title}, ${data.title_ar}, ${data.slug}, ${data.description}, ${data.description_en ?? null}, ${data.short_desc ?? null}, ${data.short_desc_en ?? null}, ${data.image_url ?? null}, ${data.price}, ${data.is_published}, ${data.created_by_id}, ${data.max_quiz_attempts ?? null}, ${catId}, ${acceptsHomework})
@@ -3574,6 +4033,11 @@ export async function createCourse(data: {
       throw err;
     }
   }
+  await syncCourseLegacyColumns(id, {
+    is_published: data.is_published,
+    image_url: data.image_url ?? null,
+    created_by_id: data.created_by_id,
+  });
   const row = rows?.[0] as Record<string, unknown> | undefined;
   const c = row ? rowToCamel(row) as Course : null;
   if (!c) throw new Error("فشل إنشاء الدورة");
@@ -3595,9 +4059,11 @@ export async function updateCourse(
     max_quiz_attempts?: number | null;
     category_id?: string | null;
     accepts_homework?: boolean;
+    created_by_id?: string;
+    assigned_teacher_id?: string | null;
   }
 ): Promise<void> {
-  await ensureCourseBilingualColumns();
+  await ensureCourseSchema();
   if (data.title !== undefined) await sql`UPDATE "Course" SET title = ${data.title}, updated_at = NOW() WHERE id = ${id}`;
   if (data.title_ar !== undefined) await sql`UPDATE "Course" SET title_ar = ${data.title_ar}, updated_at = NOW() WHERE id = ${id}`;
   if (data.description !== undefined) await sql`UPDATE "Course" SET description = ${data.description}, updated_at = NOW() WHERE id = ${id}`;
@@ -3606,7 +4072,10 @@ export async function updateCourse(
   if (data.short_desc_en !== undefined) await sql`UPDATE "Course" SET short_desc_en = ${data.short_desc_en}, updated_at = NOW() WHERE id = ${id}`;
   if (data.image_url !== undefined) await sql`UPDATE "Course" SET image_url = ${data.image_url}, updated_at = NOW() WHERE id = ${id}`;
   if (data.price !== undefined) await sql`UPDATE "Course" SET price = ${data.price}, updated_at = NOW() WHERE id = ${id}`;
-  if (data.is_published !== undefined) await sql`UPDATE "Course" SET is_published = ${data.is_published}, updated_at = NOW() WHERE id = ${id}`;
+  if (data.is_published !== undefined) {
+    await sql`UPDATE "Course" SET is_published = ${data.is_published}, updated_at = NOW() WHERE id = ${id}`;
+    await syncCourseLegacyColumns(id, { is_published: data.is_published });
+  }
   if (data.max_quiz_attempts !== undefined) await sql`UPDATE "Course" SET max_quiz_attempts = ${data.max_quiz_attempts}, updated_at = NOW() WHERE id = ${id}`;
   if (data.category_id !== undefined) await sql`UPDATE "Course" SET category_id = ${data.category_id}, updated_at = NOW() WHERE id = ${id}`;
   if (data.accepts_homework !== undefined) {
@@ -3616,6 +4085,14 @@ export async function updateCourse(
       /* العمود قد يكون غير موجود قبل تشغيل scripts/add-homework.sql */
     }
   }
+  if (data.created_by_id !== undefined) {
+    await sql`UPDATE "Course" SET created_by_id = ${data.created_by_id}, updated_at = NOW() WHERE id = ${id}`;
+    await syncCourseLegacyColumns(id, { created_by_id: data.created_by_id });
+  }
+  if (data.assigned_teacher_id !== undefined) {
+    await ensureCourseAssignedTeacherColumn();
+    await sql`UPDATE "Course" SET assigned_teacher_id = ${data.assigned_teacher_id}, updated_at = NOW() WHERE id = ${id}`;
+  }
 }
 
 export async function deleteCourse(id: string): Promise<void> {
@@ -3624,18 +4101,43 @@ export async function deleteCourse(id: string): Promise<void> {
 
 // ----- Lesson -----
 export async function getLessonsByCourseId(courseId: string): Promise<Lesson[]> {
+  if ((await detectSchemaMode(sql)) === "legacy") {
+    const rows = await sql`
+      SELECT * FROM "Chapter"
+      WHERE "courseId" = ${courseId} AND "isPublished" = true
+      ORDER BY position ASC
+    `;
+    return (rows as Record<string, unknown>[]).map((r) => mapLegacyChapterToLesson(r));
+  }
   const rows = await sql`SELECT * FROM "Lesson" WHERE course_id = ${courseId} ORDER BY "order" ASC`;
   return rows as Lesson[];
 }
 
 export async function getLessonBySlug(courseId: string, lessonSlug: string): Promise<Lesson | null> {
+  if ((await detectSchemaMode(sql)) === "legacy") {
+    const rows = await sql`
+      SELECT * FROM "Chapter"
+      WHERE "courseId" = ${courseId} AND id = ${lessonSlug}
+      LIMIT 1
+    `;
+    const row = rows[0] as Record<string, unknown> | undefined;
+    return row ? mapLegacyChapterToLesson(row) : null;
+  }
   const rows = await sql`SELECT * FROM "Lesson" WHERE course_id = ${courseId} AND slug = ${lessonSlug} LIMIT 1`;
   return (rows[0] as Lesson) ?? null;
 }
 
 export async function getLessonById(lessonId: string): Promise<Lesson | null> {
+  if ((await detectSchemaMode(sql)) === "legacy") {
+    const rows = await sql`SELECT * FROM "Chapter" WHERE id = ${lessonId} LIMIT 1`;
+    const row = rows[0] as Record<string, unknown> | undefined;
+    return row ? mapLegacyChapterToLesson(row) : null;
+  }
   const rows = await sql`SELECT * FROM "Lesson" WHERE id = ${lessonId} LIMIT 1`;
-  return (rows[0] as Lesson) ?? null;
+  if (rows[0]) return rows[0] as Lesson;
+  const chapterRows = await sql`SELECT * FROM "Chapter" WHERE id = ${lessonId} LIMIT 1`;
+  const chapterRow = chapterRows[0] as Record<string, unknown> | undefined;
+  return chapterRow ? mapLegacyChapterToLesson(chapterRow) : null;
 }
 
 export async function createLesson(data: {
@@ -3651,10 +4153,104 @@ export async function createLesson(data: {
 }): Promise<Lesson> {
   const id = generateId();
   const acceptsHomework = data.accepts_homework ?? false;
+  const legacy = (await detectSchemaMode(sql)) === "legacy";
+
+  if (legacy) {
+    await sql`
+      INSERT INTO "Chapter" (
+        id, title, description, "videoUrl", "documentUrl", position,
+        "isPublished", "isFree", "courseId", "createdAt", "updatedAt"
+      )
+      VALUES (
+        ${id}, ${data.title}, ${data.content ?? null}, ${data.video_url ?? null}, ${data.pdf_url ?? null},
+        ${data.order}, true, false, ${data.course_id}, NOW(), NOW()
+      )
+    `;
+  } else {
+    try {
+      await sql`
+        INSERT INTO "Lesson" (id, course_id, title, title_ar, slug, content, video_url, pdf_url, "order", accepts_homework)
+        VALUES (${id}, ${data.course_id}, ${data.title}, ${data.title_ar ?? null}, ${data.slug}, ${data.content ?? null}, ${data.video_url ?? null}, ${data.pdf_url ?? null}, ${data.order}, ${acceptsHomework})
+      `;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      const columnMissing = msg.includes("accepts_homework") || (msg.includes("column") && msg.includes("does not exist"));
+      if (columnMissing) {
+        await sql`ALTER TABLE "Lesson" ADD COLUMN IF NOT EXISTS accepts_homework BOOLEAN NOT NULL DEFAULT false`;
+        await sql`
+          INSERT INTO "Lesson" (id, course_id, title, title_ar, slug, content, video_url, pdf_url, "order", accepts_homework)
+          VALUES (${id}, ${data.course_id}, ${data.title}, ${data.title_ar ?? null}, ${data.slug}, ${data.content ?? null}, ${data.video_url ?? null}, ${data.pdf_url ?? null}, ${data.order}, ${acceptsHomework})
+        `;
+      } else {
+        throw err;
+      }
+    }
+  }
+
+  const l = await getLessonById(id);
+  if (!l) throw new Error("فشل إنشاء الحصة");
+  return l;
+}
+
+export async function deleteLessonsByCourseId(courseId: string): Promise<void> {
+  if ((await detectSchemaMode(sql)) === "legacy") {
+    await sql`DELETE FROM "Chapter" WHERE "courseId" = ${courseId}`;
+    return;
+  }
+  await sql`DELETE FROM "Lesson" WHERE course_id = ${courseId}`;
+}
+
+export async function getLessonIdsByCourseId(courseId: string): Promise<string[]> {
+  const legacy = (await detectSchemaMode(sql)) === "legacy";
+  const rows = legacy
+    ? await sql`SELECT id FROM "Chapter" WHERE "courseId" = ${courseId}`
+    : await sql`SELECT id FROM "Lesson" WHERE course_id = ${courseId}`;
+  return (rows as { id: string }[]).map((r) => String(r.id));
+}
+
+export async function updateLesson(
+  id: string,
+  data: {
+    title: string;
+    title_ar?: string | null;
+    slug: string;
+    content?: string | null;
+    video_url?: string | null;
+    pdf_url?: string | null;
+    order: number;
+    accepts_homework?: boolean;
+  },
+): Promise<void> {
+  const acceptsHomework = data.accepts_homework ?? false;
+  const legacy = (await detectSchemaMode(sql)) === "legacy";
+
+  if (legacy) {
+    await sql`
+      UPDATE "Chapter"
+      SET title = ${data.title},
+          description = ${data.content ?? null},
+          "videoUrl" = ${data.video_url ?? null},
+          "documentUrl" = ${data.pdf_url ?? null},
+          position = ${data.order},
+          "updatedAt" = NOW()
+      WHERE id = ${id}
+    `;
+    return;
+  }
+
   try {
     await sql`
-      INSERT INTO "Lesson" (id, course_id, title, title_ar, slug, content, video_url, pdf_url, "order", accepts_homework)
-      VALUES (${id}, ${data.course_id}, ${data.title}, ${data.title_ar ?? null}, ${data.slug}, ${data.content ?? null}, ${data.video_url ?? null}, ${data.pdf_url ?? null}, ${data.order}, ${acceptsHomework})
+      UPDATE "Lesson"
+      SET title = ${data.title},
+          title_ar = ${data.title_ar ?? null},
+          slug = ${data.slug},
+          content = ${data.content ?? null},
+          video_url = ${data.video_url ?? null},
+          pdf_url = ${data.pdf_url ?? null},
+          "order" = ${data.order},
+          accepts_homework = ${acceptsHomework},
+          updated_at = NOW()
+      WHERE id = ${id}
     `;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -3662,18 +4258,332 @@ export async function createLesson(data: {
     if (columnMissing) {
       await sql`ALTER TABLE "Lesson" ADD COLUMN IF NOT EXISTS accepts_homework BOOLEAN NOT NULL DEFAULT false`;
       await sql`
-        INSERT INTO "Lesson" (id, course_id, title, title_ar, slug, content, video_url, pdf_url, "order", accepts_homework)
-        VALUES (${id}, ${data.course_id}, ${data.title}, ${data.title_ar ?? null}, ${data.slug}, ${data.content ?? null}, ${data.video_url ?? null}, ${data.pdf_url ?? null}, ${data.order}, ${acceptsHomework})
+        UPDATE "Lesson"
+        SET title = ${data.title},
+            title_ar = ${data.title_ar ?? null},
+            slug = ${data.slug},
+            content = ${data.content ?? null},
+            video_url = ${data.video_url ?? null},
+            pdf_url = ${data.pdf_url ?? null},
+            "order" = ${data.order},
+            accepts_homework = ${acceptsHomework},
+            updated_at = NOW()
+        WHERE id = ${id}
       `;
-    } else throw err;
+    } else {
+      throw err;
+    }
   }
-  const l = await getLessonById(id);
-  if (!l) throw new Error("فشل إنشاء الحصة");
-  return l;
 }
 
-export async function deleteLessonsByCourseId(courseId: string): Promise<void> {
-  await sql`DELETE FROM "Lesson" WHERE course_id = ${courseId}`;
+export async function deleteLessonById(lessonId: string): Promise<void> {
+  const legacy = (await detectSchemaMode(sql)) === "legacy";
+  if (legacy) {
+    await sql`DELETE FROM "Chapter" WHERE id = ${lessonId}`;
+    return;
+  }
+  await sql`DELETE FROM "Lesson" WHERE id = ${lessonId}`;
+}
+
+/** Ensure remedial quiz columns + QuizCourseAssignment table exist */
+export async function ensureQuizFeaturesSchema(): Promise<void> {
+  return ensureOnce("ensureQuizFeaturesSchema", async () => {
+    await sql`ALTER TABLE "Quiz" ADD COLUMN IF NOT EXISTS "quizType" TEXT NOT NULL DEFAULT 'NORMAL'`;
+    await sql`ALTER TABLE "Quiz" ADD COLUMN IF NOT EXISTS "parentQuizId" TEXT`;
+    await sql`ALTER TABLE "Quiz" ADD COLUMN IF NOT EXISTS quiz_type TEXT NOT NULL DEFAULT 'NORMAL'`;
+    await sql`ALTER TABLE "Quiz" ADD COLUMN IF NOT EXISTS parent_quiz_id TEXT`;
+    await sql`ALTER TABLE "Question" ADD COLUMN IF NOT EXISTS image_url TEXT`;
+    await sql`
+      CREATE TABLE IF NOT EXISTS "QuizCourseAssignment" (
+        id TEXT PRIMARY KEY,
+        "quizId" TEXT NOT NULL REFERENCES "Quiz"(id) ON DELETE CASCADE,
+        "courseId" TEXT NOT NULL REFERENCES "Course"(id) ON DELETE CASCADE,
+        position INT NOT NULL DEFAULT 0,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        UNIQUE ("quizId", "courseId")
+      )
+    `;
+    await sql`CREATE INDEX IF NOT EXISTS "QuizCourseAssignment_courseId_idx" ON "QuizCourseAssignment"("courseId")`;
+    await sql`CREATE INDEX IF NOT EXISTS "QuizCourseAssignment_quizId_idx" ON "QuizCourseAssignment"("quizId")`;
+    await sql`ALTER TABLE "QuizAttempt" ADD COLUMN IF NOT EXISTS answers_json TEXT`;
+    await sql`ALTER TABLE "Quiz" ADD COLUMN IF NOT EXISTS max_attempts INT`;
+    await backfillQuestionImageUrls();
+  });
+}
+
+/** Track lesson completion for sequential course unlocking */
+export async function ensureLessonProgressSchema(): Promise<void> {
+  return ensureOnce("ensureLessonProgressSchema", async () => {
+    await sql`
+      CREATE TABLE IF NOT EXISTS "LessonProgress" (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL REFERENCES "User"(id) ON DELETE CASCADE,
+        lesson_id TEXT NOT NULL,
+        course_id TEXT NOT NULL REFERENCES "Course"(id) ON DELETE CASCADE,
+        completed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        UNIQUE (user_id, lesson_id, course_id)
+      )
+    `;
+    await sql`CREATE INDEX IF NOT EXISTS "LessonProgress_user_course_idx" ON "LessonProgress"(user_id, course_id)`;
+  });
+}
+
+export async function getCompletedLessonIdsForCourse(
+  userId: string,
+  courseId: string,
+): Promise<Set<string>> {
+  await ensureLessonProgressSchema();
+  const rows = await sql`
+    SELECT lesson_id FROM "LessonProgress"
+    WHERE user_id = ${userId} AND course_id = ${courseId}
+  `;
+  return new Set((rows as { lesson_id: string }[]).map((r) => String(r.lesson_id)));
+}
+
+/** عدد الحصص المكتملة لكل طالب — اختيارياً ضمن كورسات محددة (لإحصائيات المدرس) */
+export async function getCompletedLessonCountsForUsers(
+  userIds: string[],
+  courseIds?: string[],
+): Promise<Map<string, number>> {
+  await ensureLessonProgressSchema();
+  const map = new Map<string, number>();
+  if (userIds.length === 0) return map;
+  const uniqUserIds = [...new Set(userIds.map((id) => String(id).trim()).filter(Boolean))];
+  const scopedCourseIds =
+    courseIds?.map((id) => String(id).trim()).filter(Boolean) ?? [];
+  const rows =
+    scopedCourseIds.length > 0
+      ? await sql`
+          SELECT user_id, COUNT(*)::int AS cnt
+          FROM "LessonProgress"
+          WHERE user_id = ANY(${uniqUserIds}::text[])
+            AND course_id = ANY(${scopedCourseIds}::text[])
+          GROUP BY user_id
+        `
+      : await sql`
+          SELECT user_id, COUNT(*)::int AS cnt
+          FROM "LessonProgress"
+          WHERE user_id = ANY(${uniqUserIds}::text[])
+          GROUP BY user_id
+        `;
+  for (const row of rows as Array<{ user_id?: unknown; cnt?: unknown }>) {
+    if (row.user_id != null) {
+      map.set(String(row.user_id), Number(row.cnt ?? 0));
+    }
+  }
+  return map;
+}
+
+export async function isLessonCompleteForUser(
+  userId: string,
+  lessonId: string,
+  courseId: string,
+): Promise<boolean> {
+  await ensureLessonProgressSchema();
+  const rows = await sql`
+    SELECT 1 FROM "LessonProgress"
+    WHERE user_id = ${userId} AND lesson_id = ${lessonId} AND course_id = ${courseId}
+    LIMIT 1
+  `;
+  return rows.length > 0;
+}
+
+export async function markLessonComplete(
+  userId: string,
+  lessonId: string,
+  courseId: string,
+): Promise<boolean> {
+  await ensureLessonProgressSchema();
+  const legacy = (await detectSchemaMode(sql)) === "legacy";
+  const lessonRows = legacy
+    ? await sql`SELECT id FROM "Chapter" WHERE id = ${lessonId} AND "courseId" = ${courseId} LIMIT 1`
+    : await sql`SELECT id FROM "Lesson" WHERE id = ${lessonId} AND course_id = ${courseId} LIMIT 1`;
+  if (!lessonRows[0]) return false;
+
+  const id = generateId();
+  await sql`
+    INSERT INTO "LessonProgress" (id, user_id, lesson_id, course_id, completed_at)
+    VALUES (${id}, ${userId}, ${lessonId}, ${courseId}, NOW())
+    ON CONFLICT (user_id, lesson_id, course_id) DO NOTHING
+  `;
+  return true;
+}
+
+export async function getLatestQuizAttemptsMap(
+  userId: string,
+  quizIds: string[],
+): Promise<Map<string, { id: string; score: number; totalQuestions: number }>> {
+  const map = new Map<string, { id: string; score: number; totalQuestions: number }>();
+  if (quizIds.length === 0) return map;
+  const rows = await sql`
+    SELECT DISTINCT ON (quiz_id) id, quiz_id, score, total_questions
+    FROM "QuizAttempt"
+    WHERE user_id = ${userId}
+      AND quiz_id = ANY(${quizIds})
+      AND total_questions >= 1
+    ORDER BY quiz_id, COALESCE(updated_at, created_at) DESC
+  `;
+  for (const row of rows as Record<string, unknown>[]) {
+    const totalQuestions = Number(row.total_questions ?? 0);
+    if (totalQuestions < 1) continue;
+    map.set(String(row.quiz_id), {
+      id: String(row.id),
+      score: Number(row.score ?? 0),
+      totalQuestions,
+    });
+  }
+  return map;
+}
+
+/** For progression: any submitted pass counts (supports unlimited quiz retries). */
+export async function getQuizProgressSets(
+  userId: string,
+  quizIds: string[],
+  passPercent = 50,
+): Promise<{ submitted: Set<string>; passed: Set<string> }> {
+  const submitted = new Set<string>();
+  const passed = new Set<string>();
+  if (quizIds.length === 0) return { submitted, passed };
+
+  const rows = await sql`
+    SELECT quiz_id,
+      BOOL_OR((score::decimal / total_questions::decimal) * 100 >= ${passPercent}) as has_pass
+    FROM "QuizAttempt"
+    WHERE user_id = ${userId}
+      AND quiz_id = ANY(${quizIds})
+      AND total_questions >= 1
+    GROUP BY quiz_id
+  `;
+  for (const row of rows as { quiz_id: string; has_pass: boolean | string }[]) {
+    const id = String(row.quiz_id);
+    submitted.add(id);
+    if (row.has_pass === true || row.has_pass === "t") passed.add(id);
+  }
+  return { submitted, passed };
+}
+
+function normalizeQuizType(value: unknown): QuizType {
+  return String(value ?? "NORMAL").toUpperCase() === "REMEDIAL" ? "REMEDIAL" : "NORMAL";
+}
+
+export function resolveQuestionImageUrl(row: Record<string, unknown>): string | null {
+  const raw = row.image_url ?? row.imageUrl;
+  if (raw == null) return null;
+  const s = String(raw).trim();
+  return s || null;
+}
+
+async function backfillQuestionImageUrls(): Promise<void> {
+  try {
+    await sql`
+      UPDATE "Question" q
+      SET image_url = NULLIF(TRIM(a.payload->>'imageUrl'), '')
+      FROM "_MigrationArchive" a
+      WHERE a.source_table = 'Question_extras'
+        AND a.source_id = q.id
+        AND (q.image_url IS NULL OR TRIM(q.image_url) = '')
+        AND a.payload->>'imageUrl' IS NOT NULL
+        AND TRIM(a.payload->>'imageUrl') <> ''
+    `;
+  } catch {
+    /* archive table may not exist */
+  }
+  try {
+    const cols = await sql`
+      SELECT column_name FROM information_schema.columns
+      WHERE table_schema = 'public' AND table_name = 'Question' AND column_name = 'imageUrl'
+    `;
+    if ((cols as { column_name?: string }[]).length > 0) {
+      await sql`
+        UPDATE "Question"
+        SET image_url = COALESCE(NULLIF(TRIM(image_url), ''), NULLIF(TRIM("imageUrl"), ''))
+        WHERE "imageUrl" IS NOT NULL AND TRIM("imageUrl") <> ''
+          AND (image_url IS NULL OR TRIM(image_url) = '')
+      `;
+    }
+  } catch {
+    /* legacy column absent */
+  }
+}
+
+export async function ensureQuestionImageUrlColumn(): Promise<void> {
+  return ensureOnce("ensureQuestionImageUrlColumn", async () => {
+    await sql`ALTER TABLE "Question" ADD COLUMN IF NOT EXISTS image_url TEXT`;
+    await backfillQuestionImageUrls();
+  });
+}
+
+export async function ensureQuestionOptionPositionColumn(): Promise<void> {
+  return ensureOnce("ensureQuestionOptionPositionColumn", async () => {
+    await sql`ALTER TABLE "QuestionOption" ADD COLUMN IF NOT EXISTS position INT`;
+    await sql`
+      WITH ranked AS (
+        SELECT id,
+          ROW_NUMBER() OVER (
+            PARTITION BY question_id
+            ORDER BY
+              COALESCE(
+                CASE WHEN id ~ '-opt-[0-9]+$' THEN (substring(id from '-opt-([0-9]+)$'))::int END,
+                999999
+              ),
+              created_at,
+              id
+          ) AS rn
+        FROM "QuestionOption"
+        WHERE position IS NULL
+      )
+      UPDATE "QuestionOption" o
+      SET position = r.rn
+      FROM ranked r
+      WHERE o.id = r.id
+    `;
+  });
+}
+
+function mapQuizRow(row: Record<string, unknown>, legacy: boolean): Record<string, unknown> {
+  const base = legacy ? (mapLegacyQuizRow(row) as unknown as Record<string, unknown>) : rowToCamel(row)!;
+  return {
+    ...base,
+    quizType: normalizeQuizType(base.quizType ?? base.quiz_type),
+    parentQuizId: (base.parentQuizId ?? base.parent_quiz_id ?? null) as string | null,
+    maxAttempts: base.maxAttempts ?? base.max_attempts ?? null,
+  };
+}
+
+async function loadQuizQuestionsForEdit(
+  quizId: string,
+  legacy: boolean,
+): Promise<Array<Record<string, unknown> & { options: Record<string, unknown>[] }>> {
+  await ensureQuestionImageUrlColumn();
+  await ensureQuestionOptionPositionColumn();
+  const questionRows = legacy
+    ? await sql`SELECT * FROM "Question" WHERE "quizId" = ${quizId} ORDER BY position ASC`
+    : await sql`SELECT * FROM "Question" WHERE quiz_id = ${quizId} ORDER BY "order" ASC`;
+  const questions: Array<Record<string, unknown> & { options: Record<string, unknown>[] }> = [];
+  if (legacy) {
+    for (const q of questionRows as Record<string, unknown>[]) {
+      const mapped = mapLegacyQuestionWithOptions(q);
+      questions.push({
+        ...mapped,
+        imageUrl: resolveQuestionImageUrl(q),
+        image_url: resolveQuestionImageUrl(q),
+        options: mapped.options as unknown as Record<string, unknown>[],
+      });
+    }
+    return questions;
+  }
+  for (const q of questionRows as Record<string, unknown>[]) {
+    const optRows = await sql`SELECT * FROM "QuestionOption" WHERE question_id = ${q.id} ORDER BY position ASC, created_at ASC, id ASC`;
+    const mapped = rowToCamel(q)!;
+    questions.push({
+      ...mapped,
+      imageUrl: resolveQuestionImageUrl(q),
+      image_url: resolveQuestionImageUrl(q),
+      options: rowsToCamel(optRows as Record<string, unknown>[]),
+    } as Record<string, unknown> & { options: Record<string, unknown>[] });
+  }
+  return questions;
 }
 
 /** جلب كورس مع الحصص والاختبارات (عدد أسئلة كل اختبار) — للصفحة التفصيلية */
@@ -3682,33 +4592,74 @@ export async function getCourseWithContent(segment: string): Promise<{
   lessons: Record<string, unknown>[];
   quizzes: Array<Record<string, unknown> & { _count: { questions: number } }>;
 } | null> {
-  const isId = /^c[a-z0-9]{22}$/i.test(segment);
+  const isId = isCourseSegmentId(segment);
   let courseRow: Record<string, unknown> | null = null;
   if (isId) {
-    const rows = await sql`
-      SELECT c.*, cat.id as cat_id, cat.name as cat_name, cat.name_ar as cat_name_ar, cat.slug as cat_slug
-      FROM "Course" c
-      LEFT JOIN "Category" cat ON c.category_id = cat.id
-      WHERE c.id = ${segment} AND c.is_published = true LIMIT 1
-    `;
-    const r = rows[0] as Record<string, unknown> | undefined;
-    if (!r) return null;
-    const { cat_id, cat_name, cat_name_ar, cat_slug, ...rest } = r;
-    courseRow = { ...rowToCamel(rest), category: r.cat_id ? rowToCamel({ id: cat_id, name: cat_name, name_ar: cat_name_ar, slug: cat_slug }) : null };
+    if ((await detectSchemaMode(sql)) === "legacy") {
+      const rows = await sql`
+        SELECT c.* FROM "Course" c
+        WHERE c.id = ${segment} AND c."isPublished" = true LIMIT 1
+      `;
+      const r = rows[0] as Record<string, unknown> | undefined;
+      if (!r) return null;
+      courseRow = mapLegacyCourseRow(r) as unknown as Record<string, unknown>;
+    } else {
+      const rows = await sql`
+        SELECT c.*, cat.id as cat_id, cat.name as cat_name, cat.name_ar as cat_name_ar, cat.slug as cat_slug
+        FROM "Course" c
+        LEFT JOIN "Category" cat ON c.category_id = cat.id
+        WHERE c.id = ${segment} AND c.is_published = true LIMIT 1
+      `;
+      const r = rows[0] as Record<string, unknown> | undefined;
+      if (!r) return null;
+      const { cat_id, cat_name, cat_name_ar, cat_slug, ...rest } = r;
+      courseRow = { ...rowToCamel(rest), category: r.cat_id ? rowToCamel({ id: cat_id, name: cat_name, name_ar: cat_name_ar, slug: cat_slug }) : null };
+    }
   } else {
     const c = await getCourseBySlug(segment);
     if (!c) return null;
     courseRow = c as unknown as Record<string, unknown>;
   }
   const courseId = courseRow.id as string;
-  const lessonRows = await sql`SELECT * FROM "Lesson" WHERE course_id = ${courseId} ORDER BY "order" ASC`;
-  const quizRows = await sql`
-    SELECT q.*, (SELECT COUNT(*)::int FROM "Question" WHERE quiz_id = q.id) as question_count
-    FROM "Quiz" q WHERE q.course_id = ${courseId} ORDER BY q."order" ASC
-  `;
-  const lessons = rowsToCamel(lessonRows as Record<string, unknown>[]);
+  const legacy = (await detectSchemaMode(sql)) === "legacy";
+  await ensureQuizFeaturesSchema();
+  const lessonRows = legacy
+    ? await sql`SELECT * FROM "Chapter" WHERE "courseId" = ${courseId} AND "isPublished" = true ORDER BY position ASC`
+    : await sql`SELECT * FROM "Lesson" WHERE course_id = ${courseId} ORDER BY "order" ASC`;
+  const quizRows = legacy
+    ? await sql`
+        SELECT q.*, false as is_linked, q."courseId" as owner_course_id, q.position as sort_position,
+          (SELECT COUNT(*)::int FROM "Question" WHERE "quizId" = q.id) as question_count
+        FROM "Quiz" q
+        WHERE q."courseId" = ${courseId} AND q."isPublished" = true
+        UNION ALL
+        SELECT q.*, true as is_linked, q."courseId" as owner_course_id, a.position as sort_position,
+          (SELECT COUNT(*)::int FROM "Question" WHERE "quizId" = q.id) as question_count
+        FROM "Quiz" q
+        JOIN "QuizCourseAssignment" a ON a."quizId" = q.id
+        WHERE a."courseId" = ${courseId} AND q."isPublished" = true
+        ORDER BY sort_position ASC
+      `
+    : await sql`
+        SELECT q.*, false as is_linked, q.course_id as owner_course_id, q."order" as sort_position,
+          (SELECT COUNT(*)::int FROM "Question" WHERE quiz_id = q.id) as question_count
+        FROM "Quiz" q
+        WHERE q.course_id = ${courseId}
+        UNION ALL
+        SELECT q.*, true as is_linked, q.course_id as owner_course_id, a.position as sort_position,
+          (SELECT COUNT(*)::int FROM "Question" WHERE quiz_id = q.id) as question_count
+        FROM "Quiz" q
+        JOIN "QuizCourseAssignment" a ON a."quizId" = q.id
+        WHERE a."courseId" = ${courseId}
+        ORDER BY sort_position ASC
+      `;
+  const lessons = legacy
+    ? (lessonRows as Record<string, unknown>[]).map((r) => mapLegacyChapterToLesson(r) as unknown as Record<string, unknown>)
+    : rowsToCamel(lessonRows as Record<string, unknown>[]);
   const quizzes = (quizRows as Record<string, unknown>[]).map((q) => ({
-    ...rowToCamel(q),
+    ...mapQuizRow(q, legacy),
+    isLinked: Boolean(q.is_linked),
+    ownerCourseId: String(q.owner_course_id ?? q.courseId ?? q.course_id ?? ""),
     _count: { questions: Number((q as { question_count?: number }).question_count ?? 0) },
   })) as Array<Record<string, unknown> & { _count: { questions: number } }>;
 
@@ -3719,95 +4670,282 @@ export async function getCourseWithContent(segment: string): Promise<{
   };
 }
 
+/** نفس الطلب (metadata + الصفحة) يقرأ محتوى الدورة مرة واحدة فقط */
+export const getCourseWithContentCached = cache(getCourseWithContent);
+
 /** جلب دورة كاملة مع حصص واختبارات (أسئلة + خيارات) — لصفحة التعديل */
 export async function getCourseForEdit(courseId: string): Promise<{
   course: Record<string, unknown> | null;
   lessons: Record<string, unknown>[];
   quizzes: Array<Record<string, unknown> & { questions: Array<Record<string, unknown> & { options: Record<string, unknown>[] }> }>;
+  linkedQuizzes: Array<Record<string, unknown>>;
 } | null> {
+  const legacy = (await detectSchemaMode(sql)) === "legacy";
+  await ensureQuizFeaturesSchema();
   const courseRows = await sql`SELECT * FROM "Course" WHERE id = ${courseId} LIMIT 1`;
   const courseRow = courseRows[0] as Record<string, unknown> | undefined;
   if (!courseRow) return null;
 
-  const lessonRows = await sql`SELECT * FROM "Lesson" WHERE course_id = ${courseId} ORDER BY "order" ASC`;
-  const quizRows = await sql`SELECT * FROM "Quiz" WHERE course_id = ${courseId} ORDER BY "order" ASC`;
-  const quizzes: Array<Record<string, unknown> & { questions: Array<Record<string, unknown> & { options: Record<string, unknown>[] }> }> = [];
+  const lessonRows = legacy
+    ? await sql`SELECT * FROM "Chapter" WHERE "courseId" = ${courseId} ORDER BY position ASC`
+    : await sql`SELECT * FROM "Lesson" WHERE course_id = ${courseId} ORDER BY "order" ASC`;
+  const ownedQuizRows = legacy
+    ? await sql`SELECT * FROM "Quiz" WHERE "courseId" = ${courseId} ORDER BY position ASC`
+    : await sql`SELECT * FROM "Quiz" WHERE course_id = ${courseId} ORDER BY "order" ASC`;
+  const linkedRows = legacy
+    ? await sql`
+        SELECT q.*, a.position as assignment_position,
+          c.title as owner_course_title, c.title_ar as owner_course_title_ar
+        FROM "QuizCourseAssignment" a
+        JOIN "Quiz" q ON q.id = a."quizId"
+        JOIN "Course" c ON c.id = q."courseId"
+        WHERE a."courseId" = ${courseId}
+        ORDER BY a.position ASC
+      `
+    : await sql`
+        SELECT q.*, a.position as assignment_position,
+          c.title as owner_course_title, c.title_ar as owner_course_title_ar
+        FROM "QuizCourseAssignment" a
+        JOIN "Quiz" q ON q.id = a."quizId"
+        JOIN "Course" c ON c.id = q.course_id
+        WHERE a."courseId" = ${courseId}
+        ORDER BY a.position ASC
+      `;
 
-  for (const q of quizRows as Record<string, unknown>[]) {
-    const questionRows = await sql`SELECT * FROM "Question" WHERE quiz_id = ${q.id} ORDER BY "order" ASC`;
-    const questions: Array<Record<string, unknown> & { options: Record<string, unknown>[] }> = [];
-    for (const qu of questionRows as Record<string, unknown>[]) {
-      const optRows = await sql`SELECT * FROM "QuestionOption" WHERE question_id = ${qu.id} ORDER BY id`;
-      questions.push({ ...rowToCamel(qu)!, options: rowsToCamel(optRows as Record<string, unknown>[]) });
-    }
-    quizzes.push({ ...rowToCamel(q)!, questions });
+  const quizzes: Array<Record<string, unknown> & { questions: Array<Record<string, unknown> & { options: Record<string, unknown>[] }> }> = [];
+  for (const q of ownedQuizRows as Record<string, unknown>[]) {
+    const questions = await loadQuizQuestionsForEdit(String(q.id), legacy);
+    quizzes.push({ ...mapQuizRow(q, legacy), isLinked: false, questions });
+  }
+
+  const linkedQuizzes: Array<Record<string, unknown>> = [];
+  for (const row of linkedRows as Record<string, unknown>[]) {
+    const quizId = String(row.id);
+    const questionCountRows = legacy
+      ? await sql`SELECT COUNT(*)::int as c FROM "Question" WHERE "quizId" = ${quizId}`
+      : await sql`SELECT COUNT(*)::int as c FROM "Question" WHERE quiz_id = ${quizId}`;
+    const ownerCourseId = legacy ? String(row.courseId) : String(row.course_id);
+    linkedQuizzes.push({
+      ...mapQuizRow(row, legacy),
+      id: quizId,
+      isLinked: true,
+      ownerCourseId,
+      ownerCourseTitle: String(row.owner_course_title ?? ""),
+      ownerCourseTitleAr: row.owner_course_title_ar != null ? String(row.owner_course_title_ar) : null,
+      order: Number(row.assignment_position ?? 0),
+      _count: { questions: Number((questionCountRows[0] as { c?: number })?.c ?? 0) },
+    });
   }
 
   return {
-    course: rowToCamel(courseRow)!,
-    lessons: rowsToCamel(lessonRows as Record<string, unknown>[]),
+    course: legacy ? (mapLegacyCourseRow(courseRow) as unknown as Record<string, unknown>) : rowToCamel(courseRow)!,
+    lessons: legacy
+      ? (lessonRows as Record<string, unknown>[]).map((r) => mapLegacyChapterToLesson(r) as unknown as Record<string, unknown>)
+      : rowsToCamel(lessonRows as Record<string, unknown>[]),
     quizzes,
+    linkedQuizzes,
   };
 }
 
 // ----- Quiz / Question / QuestionOption -----
-export async function getQuizById(quizId: string): Promise<{
+export async function quizBelongsToCourse(quizId: string, courseId: string): Promise<boolean> {
+  await ensureQuizFeaturesSchema();
+  const legacy = (await detectSchemaMode(sql)) === "legacy";
+  if (legacy) {
+    const rows = await sql`
+      SELECT 1 FROM "Quiz" q
+      WHERE q.id = ${quizId}
+        AND (q."courseId" = ${courseId}
+          OR EXISTS (SELECT 1 FROM "QuizCourseAssignment" a WHERE a."quizId" = ${quizId} AND a."courseId" = ${courseId}))
+      LIMIT 1
+    `;
+    return rows.length > 0;
+  }
+  const rows = await sql`
+    SELECT 1 FROM "Quiz" q
+    WHERE q.id = ${quizId}
+      AND (q.course_id = ${courseId}
+        OR EXISTS (SELECT 1 FROM "QuizCourseAssignment" a WHERE a."quizId" = ${quizId} AND a."courseId" = ${courseId}))
+    LIMIT 1
+  `;
+  return rows.length > 0;
+}
+
+/** Student may take a quiz when enrolled in the viewing course and the quiz belongs to it (owned or linked). */
+export async function canStudentAccessQuizInCourse(
+  userId: string,
+  quizId: string,
+  courseId: string,
+): Promise<boolean> {
+  if (!(await quizBelongsToCourse(quizId, courseId))) return false;
+  const enrolled = await getEnrollment(userId, courseId);
+  if (enrolled) return true;
+  if (await hasFullCourseAccessAsStudent(userId, courseId)) return true;
+  const allowedQuizIds = await getAllowedQuizIdsForUserCourse(userId, courseId);
+  return allowedQuizIds.includes(quizId);
+}
+
+export async function getQuizById(
+  quizId: string,
+  viewingCourseId?: string | null,
+): Promise<{
   quiz: Record<string, unknown>;
   course: Record<string, unknown>;
   questions: Array<Record<string, unknown> & { options: Record<string, unknown>[] }>;
 } | null> {
+  await ensureQuizFeaturesSchema();
   const quizRows = await sql`SELECT * FROM "Quiz" WHERE id = ${quizId} LIMIT 1`;
   const quizRow = quizRows[0] as Record<string, unknown> | undefined;
   if (!quizRow) return null;
 
-  const courseId = quizRow.course_id as string;
-  const courseRows = await sql`SELECT * FROM "Course" WHERE id = ${courseId} LIMIT 1`;
+  const legacy = (await detectSchemaMode(sql)) === "legacy";
+  const ownerCourseId = legacy ? String(quizRow.courseId) : String(quizRow.course_id);
+  const resolvedCourseId = viewingCourseId?.trim() || ownerCourseId;
+  if (viewingCourseId && !(await quizBelongsToCourse(quizId, viewingCourseId))) {
+    return null;
+  }
+  const courseRows = await sql`SELECT * FROM "Course" WHERE id = ${resolvedCourseId} LIMIT 1`;
   const courseRow = courseRows[0] as Record<string, unknown> | undefined;
   if (!courseRow) return null;
 
-  const questionRows = await sql`SELECT * FROM "Question" WHERE quiz_id = ${quizId} ORDER BY "order" ASC`;
-  const questions: Array<Record<string, unknown> & { options: Record<string, unknown>[] }> = [];
-
-  for (const q of questionRows as Record<string, unknown>[]) {
-    const optRows = await sql`SELECT * FROM "QuestionOption" WHERE question_id = ${q.id} ORDER BY id`;
-    questions.push({
-      ...rowToCamel(q)!,
-      options: rowsToCamel(optRows as Record<string, unknown>[]),
-    } as Record<string, unknown> & { options: Record<string, unknown>[] });
-  }
+  const questions = await loadQuizQuestionsForEdit(quizId, legacy);
 
   return {
-    quiz: rowToCamel(quizRow)!,
-    course: rowToCamel(courseRow)!,
+    quiz: {
+      ...mapQuizRow(quizRow, legacy),
+      ownerCourseId,
+      viewingCourseId: resolvedCourseId,
+    },
+    course: legacy ? (mapLegacyCourseRow(courseRow) as unknown as Record<string, unknown>) : rowToCamel(courseRow)!,
     questions,
   };
 }
 
-export async function createQuiz(data: { course_id: string; title: string; order: number; time_limit_minutes?: number | null }): Promise<Quiz> {
+export async function createQuiz(data: {
+  course_id: string;
+  title: string;
+  order: number;
+  time_limit_minutes?: number | null;
+  quiz_type?: QuizType;
+  parent_quiz_id?: string | null;
+  max_attempts?: number | null;
+}): Promise<Quiz> {
+  await ensureQuizFeaturesSchema();
+  const legacy = (await detectSchemaMode(sql)) === "legacy";
   const id = generateId();
-  const runInsert = async () => {
+  const quizType = normalizeQuizType(data.quiz_type ?? "NORMAL");
+  const parentQuizId = data.parent_quiz_id?.trim() || null;
+  const maxAttempts = typeof data.max_attempts === "number" && data.max_attempts >= 1 ? data.max_attempts : null;
+
+  if (legacy) {
     await sql`
-      INSERT INTO "Quiz" (id, course_id, title, "order", time_limit_minutes)
-      VALUES (${id}, ${data.course_id}, ${data.title}, ${data.order}, ${data.time_limit_minutes ?? null})
+      INSERT INTO "Quiz" (id, "courseId", title, position, "isPublished", timer, "maxAttempts", "quizType", "parentQuizId", "createdAt", "updatedAt")
+      VALUES (${id}, ${data.course_id}, ${data.title}, ${data.order}, true, ${data.time_limit_minutes ?? null}, ${maxAttempts ?? 1}, ${quizType}, ${parentQuizId}, NOW(), NOW())
     `;
-  };
-  try {
-    await runInsert();
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    const code = typeof (err as { code?: string })?.code === "string" ? (err as { code: string }).code : "";
-    const isMissingColumn = code === "42703" || /time_limit_minutes|does not exist|column.*not exist/i.test(msg);
-    if (isMissingColumn) {
-      await sql`ALTER TABLE "Quiz" ADD COLUMN IF NOT EXISTS time_limit_minutes INT`;
+  } else {
+    const runInsert = async () => {
+      await sql`
+        INSERT INTO "Quiz" (id, course_id, title, "order", time_limit_minutes, quiz_type, parent_quiz_id, max_attempts)
+        VALUES (${id}, ${data.course_id}, ${data.title}, ${data.order}, ${data.time_limit_minutes ?? null}, ${quizType}, ${parentQuizId}, ${maxAttempts})
+      `;
+    };
+    try {
       await runInsert();
-    } else {
-      throw err;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      const code = typeof (err as { code?: string })?.code === "string" ? (err as { code: string }).code : "";
+      const isMissingColumn = code === "42703" || /time_limit_minutes|quiz_type|parent_quiz_id|does not exist|column.*not exist/i.test(msg);
+      if (isMissingColumn) {
+        await ensureQuizFeaturesSchema();
+        await sql`ALTER TABLE "Quiz" ADD COLUMN IF NOT EXISTS time_limit_minutes INT`;
+        await runInsert();
+      } else {
+        throw err;
+      }
     }
   }
+
   const rows = await sql`SELECT * FROM "Quiz" WHERE id = ${id} LIMIT 1`;
   const q = rows[0] as Quiz;
   if (!q) throw new Error("فشل إنشاء الاختبار");
-  return q;
+  return legacy ? mapLegacyQuizRow(rows[0] as Record<string, unknown>) : (rowToCamel(rows[0] as Record<string, unknown>) as Quiz);
+}
+
+export async function getOwnedQuizIdsForCourse(courseId: string): Promise<string[]> {
+  await ensureQuizFeaturesSchema();
+  const legacy = (await detectSchemaMode(sql)) === "legacy";
+  const rows = legacy
+    ? await sql`SELECT id FROM "Quiz" WHERE "courseId" = ${courseId}`
+    : await sql`SELECT id FROM "Quiz" WHERE course_id = ${courseId}`;
+  return (rows as { id: string }[]).map((r) => String(r.id));
+}
+
+export async function updateQuiz(
+  quizId: string,
+  data: {
+    title: string;
+    order: number;
+    time_limit_minutes?: number | null;
+    quiz_type?: QuizType;
+    parent_quiz_id?: string | null;
+    max_attempts?: number | null;
+  },
+): Promise<void> {
+  await ensureQuizFeaturesSchema();
+  const legacy = (await detectSchemaMode(sql)) === "legacy";
+  const quizType = normalizeQuizType(data.quiz_type ?? "NORMAL");
+  const parentQuizId = data.parent_quiz_id?.trim() || null;
+  const maxAttempts = typeof data.max_attempts === "number" && data.max_attempts >= 1 ? data.max_attempts : null;
+
+  if (legacy) {
+    await sql`
+      UPDATE "Quiz"
+      SET title = ${data.title},
+          position = ${data.order},
+          timer = ${data.time_limit_minutes ?? null},
+          "maxAttempts" = ${maxAttempts ?? 1},
+          "quizType" = ${quizType},
+          "parentQuizId" = ${parentQuizId},
+          "updatedAt" = NOW()
+      WHERE id = ${quizId}
+    `;
+    return;
+  }
+
+  await sql`
+    UPDATE "Quiz"
+    SET title = ${data.title},
+        "order" = ${data.order},
+        time_limit_minutes = ${data.time_limit_minutes ?? null},
+        quiz_type = ${quizType},
+        parent_quiz_id = ${parentQuizId},
+        max_attempts = ${maxAttempts},
+        updated_at = NOW()
+    WHERE id = ${quizId}
+  `;
+}
+
+export async function deleteQuestionsByQuizId(quizId: string): Promise<void> {
+  await ensureQuizFeaturesSchema();
+  const legacy = (await detectSchemaMode(sql)) === "legacy";
+  const questions = legacy
+    ? await sql`SELECT id FROM "Question" WHERE "quizId" = ${quizId}`
+    : await sql`SELECT id FROM "Question" WHERE quiz_id = ${quizId}`;
+  for (const qu of questions as { id: string }[]) {
+    if (!legacy) {
+      await sql`DELETE FROM "QuestionOption" WHERE question_id = ${qu.id}`;
+    }
+  }
+  if (legacy) {
+    await sql`DELETE FROM "Question" WHERE "quizId" = ${quizId}`;
+  } else {
+    await sql`DELETE FROM "Question" WHERE quiz_id = ${quizId}`;
+  }
+}
+
+export async function deleteQuizById(quizId: string): Promise<void> {
+  await deleteQuestionsByQuizId(quizId);
+  await sql`DELETE FROM "Quiz" WHERE id = ${quizId}`;
 }
 
 export async function createQuestion(data: {
@@ -3815,11 +4953,30 @@ export async function createQuestion(data: {
   type: "MULTIPLE_CHOICE" | "ESSAY" | "TRUE_FALSE";
   question_text: string;
   order: number;
+  image_url?: string | null;
+  options?: Array<{ text: string; is_correct: boolean }>;
 }): Promise<Question> {
+  await ensureQuestionImageUrlColumn();
+  const legacy = (await detectSchemaMode(sql)) === "legacy";
   const id = generateId();
+  const imageUrl = data.image_url?.trim() || null;
+
+  if (legacy) {
+    const opts = data.options ?? [];
+    const optionsJson = JSON.stringify(opts.map((o) => o.text));
+    const correct = opts.find((o) => o.is_correct)?.text ?? "";
+    const legacyType = data.type === "ESSAY" ? "SHORT_ANSWER" : data.type;
+    await sql`
+      INSERT INTO "Question" (id, "quizId", text, type, options, "correctAnswer", position, points, "imageUrl", "createdAt", "updatedAt")
+      VALUES (${id}, ${data.quiz_id}, ${data.question_text}, ${legacyType}, ${optionsJson}, ${correct}, ${data.order}, 1, ${imageUrl}, NOW(), NOW())
+    `;
+    const rows = await sql`SELECT * FROM "Question" WHERE id = ${id} LIMIT 1`;
+    return mapLegacyQuestionRow(rows[0] as Record<string, unknown>);
+  }
+
   await sql`
-    INSERT INTO "Question" (id, quiz_id, type, question_text, "order")
-    VALUES (${id}, ${data.quiz_id}, ${data.type}, ${data.question_text}, ${data.order})
+    INSERT INTO "Question" (id, quiz_id, type, question_text, "order", image_url)
+    VALUES (${id}, ${data.quiz_id}, ${data.type}, ${data.question_text}, ${data.order}, ${imageUrl})
   `;
   const rows = await sql`SELECT * FROM "Question" WHERE id = ${id} LIMIT 1`;
   const q = rows[0] as Question;
@@ -3831,11 +4988,13 @@ export async function createQuestionOption(data: {
   question_id: string;
   text: string;
   is_correct: boolean;
+  position: number;
 }): Promise<QuestionOption> {
+  await ensureQuestionOptionPositionColumn();
   const id = generateId();
   await sql`
-    INSERT INTO "QuestionOption" (id, question_id, text, is_correct)
-    VALUES (${id}, ${data.question_id}, ${data.text}, ${data.is_correct})
+    INSERT INTO "QuestionOption" (id, question_id, text, is_correct, position)
+    VALUES (${id}, ${data.question_id}, ${data.text}, ${data.is_correct}, ${data.position})
   `;
   const rows = await sql`SELECT * FROM "QuestionOption" WHERE id = ${id} LIMIT 1`;
   const o = rows[0] as QuestionOption;
@@ -3843,20 +5002,356 @@ export async function createQuestionOption(data: {
   return o;
 }
 
-export async function deleteQuizzesByCourseId(courseId: string): Promise<void> {
-  const quizzes = await sql`SELECT id FROM "Quiz" WHERE course_id = ${courseId}`;
+export async function deleteOwnedQuizzesByCourseId(courseId: string): Promise<void> {
+  await ensureQuizFeaturesSchema();
+  const legacy = (await detectSchemaMode(sql)) === "legacy";
+  const quizzes = legacy
+    ? await sql`SELECT id FROM "Quiz" WHERE "courseId" = ${courseId}`
+    : await sql`SELECT id FROM "Quiz" WHERE course_id = ${courseId}`;
   for (const q of quizzes as { id: string }[]) {
-    const questions = await sql`SELECT id FROM "Question" WHERE quiz_id = ${q.id}`;
+    const questions = legacy
+      ? await sql`SELECT id FROM "Question" WHERE "quizId" = ${q.id}`
+      : await sql`SELECT id FROM "Question" WHERE quiz_id = ${q.id}`;
     for (const qu of questions as { id: string }[]) {
-      await sql`DELETE FROM "QuestionOption" WHERE question_id = ${qu.id}`;
+      if (!legacy) {
+        await sql`DELETE FROM "QuestionOption" WHERE question_id = ${qu.id}`;
+      }
     }
-    await sql`DELETE FROM "Question" WHERE quiz_id = ${q.id}`;
+    if (legacy) {
+      await sql`DELETE FROM "Question" WHERE "quizId" = ${q.id}`;
+    } else {
+      await sql`DELETE FROM "Question" WHERE quiz_id = ${q.id}`;
+    }
   }
-  await sql`DELETE FROM "Quiz" WHERE course_id = ${courseId}`;
+  if (legacy) {
+    await sql`DELETE FROM "Quiz" WHERE "courseId" = ${courseId}`;
+  } else {
+    await sql`DELETE FROM "Quiz" WHERE course_id = ${courseId}`;
+  }
+}
+
+/** @deprecated use deleteOwnedQuizzesByCourseId */
+export async function deleteQuizzesByCourseId(courseId: string): Promise<void> {
+  return deleteOwnedQuizzesByCourseId(courseId);
+}
+
+export async function syncQuizCourseAssignments(
+  courseId: string,
+  linked: Array<{ quizId: string; position: number }>,
+): Promise<void> {
+  await ensureQuizFeaturesSchema();
+  await sql`DELETE FROM "QuizCourseAssignment" WHERE "courseId" = ${courseId}`;
+  const legacy = (await detectSchemaMode(sql)) === "legacy";
+  for (const item of linked) {
+    const quizId = item.quizId?.trim();
+    if (!quizId) continue;
+    const ownerRows = legacy
+      ? await sql`SELECT "courseId" FROM "Quiz" WHERE id = ${quizId} LIMIT 1`
+      : await sql`SELECT course_id FROM "Quiz" WHERE id = ${quizId} LIMIT 1`;
+    if (!ownerRows[0]) continue;
+    const ownerId = String(
+      (ownerRows[0] as Record<string, unknown>).courseId ?? (ownerRows[0] as Record<string, unknown>).course_id,
+    );
+    if (ownerId === courseId) continue;
+    const id = generateId();
+    await sql`
+      INSERT INTO "QuizCourseAssignment" (id, "quizId", "courseId", position, updated_at)
+      VALUES (${id}, ${quizId}, ${courseId}, ${item.position}, NOW())
+      ON CONFLICT ("quizId", "courseId") DO UPDATE SET position = EXCLUDED.position, updated_at = NOW()
+    `;
+  }
+}
+
+export async function getLinkableQuizzes(
+  excludeCourseId: string,
+  userId: string,
+  role: UserRole,
+): Promise<Array<{ id: string; title: string; courseId: string; courseTitle: string; courseTitleAr: string | null; questionCount: number }>> {
+  await ensureQuizFeaturesSchema();
+  const legacy = (await detectSchemaMode(sql)) === "legacy";
+  const isAdmin = role === "ADMIN" || role === "ASSISTANT_ADMIN";
+  const rows = legacy
+    ? isAdmin
+      ? await sql`
+          SELECT q.id, q.title, q."courseId" as course_id, c.title as course_title, c.title_ar as course_title_ar,
+            (SELECT COUNT(*)::int FROM "Question" WHERE "quizId" = q.id) as question_count
+          FROM "Quiz" q
+          JOIN "Course" c ON c.id = q."courseId"
+          WHERE q."courseId" != ${excludeCourseId}
+          ORDER BY c.title ASC, q.title ASC
+        `
+      : await sql`
+          SELECT q.id, q.title, q."courseId" as course_id, c.title as course_title, c.title_ar as course_title_ar,
+            (SELECT COUNT(*)::int FROM "Question" WHERE "quizId" = q.id) as question_count
+          FROM "Quiz" q
+          JOIN "Course" c ON c.id = q."courseId"
+          WHERE q."courseId" != ${excludeCourseId}
+            AND (c.created_by_id = ${userId} OR c."userId" = ${userId} OR EXISTS (
+              SELECT 1 FROM "Course" tc WHERE tc.id = ${excludeCourseId}
+                AND (tc.created_by_id = ${userId} OR tc."userId" = ${userId})
+            ))
+          ORDER BY c.title ASC, q.title ASC
+        `
+    : isAdmin
+      ? await sql`
+          SELECT q.id, q.title, q.course_id, c.title as course_title, c.title_ar as course_title_ar,
+            (SELECT COUNT(*)::int FROM "Question" WHERE quiz_id = q.id) as question_count
+          FROM "Quiz" q
+          JOIN "Course" c ON c.id = q.course_id
+          WHERE q.course_id != ${excludeCourseId}
+          ORDER BY c.title ASC, q.title ASC
+        `
+      : await sql`
+          SELECT q.id, q.title, q.course_id, c.title as course_title, c.title_ar as course_title_ar,
+            (SELECT COUNT(*)::int FROM "Question" WHERE quiz_id = q.id) as question_count
+          FROM "Quiz" q
+          JOIN "Course" c ON c.id = q.course_id
+          WHERE q.course_id != ${excludeCourseId}
+            AND (c.created_by_id = ${userId} OR EXISTS (
+              SELECT 1 FROM "Course" tc WHERE tc.id = ${excludeCourseId} AND tc.created_by_id = ${userId}
+            ))
+          ORDER BY c.title ASC, q.title ASC
+        `;
+  return (rows as Record<string, unknown>[]).map((r) => ({
+    id: String(r.id),
+    title: String(r.title ?? ""),
+    courseId: String(r.course_id ?? ""),
+    courseTitle: String(r.course_title ?? ""),
+    courseTitleAr: r.course_title_ar != null ? String(r.course_title_ar) : null,
+    questionCount: Number(r.question_count ?? 0),
+  }));
+}
+
+function parseLinkedCoursesJson(value: unknown): QuizAdminManageRow["linkedCourses"] {
+  if (!value) return [];
+  const arr = typeof value === "string" ? JSON.parse(value) : value;
+  if (!Array.isArray(arr)) return [];
+  return arr.map((item) => {
+    const row = item as Record<string, unknown>;
+    return {
+      courseId: String(row.courseId ?? ""),
+      courseTitle: String(row.courseTitle ?? ""),
+      courseTitleAr: row.courseTitleAr != null ? String(row.courseTitleAr) : null,
+      position: Number(row.position ?? 0),
+    };
+  });
+}
+
+/** List quizzes with owner course + linked courses — for admin quiz management page */
+export async function getQuizzesForAdminManage(
+  userId: string,
+  role: UserRole,
+): Promise<QuizAdminManageRow[]> {
+  await ensureQuizFeaturesSchema();
+  const legacy = (await detectSchemaMode(sql)) === "legacy";
+  const isStaffWide = role === "ADMIN" || role === "ASSISTANT_ADMIN";
+
+  const rows = legacy
+    ? isStaffWide
+      ? await sql`
+          SELECT q.id, q.title,
+            COALESCE(q."quizType", 'NORMAL') as quiz_type,
+            q."courseId" as owner_course_id,
+            c.title as owner_course_title, c.title_ar as owner_course_title_ar,
+            (SELECT COUNT(*)::int FROM "Question" WHERE "quizId" = q.id) as question_count,
+            COALESCE(
+              (
+                SELECT json_agg(
+                  json_build_object(
+                    'courseId', a."courseId",
+                    'courseTitle', lc.title,
+                    'courseTitleAr', lc.title_ar,
+                    'position', a.position
+                  )
+                  ORDER BY a.position ASC
+                )
+                FROM "QuizCourseAssignment" a
+                JOIN "Course" lc ON lc.id = a."courseId"
+                WHERE a."quizId" = q.id
+              ),
+              '[]'::json
+            ) as linked_courses
+          FROM "Quiz" q
+          JOIN "Course" c ON c.id = q."courseId"
+          ORDER BY c.title ASC, q.title ASC
+        `
+      : await sql`
+          SELECT q.id, q.title,
+            COALESCE(q."quizType", 'NORMAL') as quiz_type,
+            q."courseId" as owner_course_id,
+            c.title as owner_course_title, c.title_ar as owner_course_title_ar,
+            (SELECT COUNT(*)::int FROM "Question" WHERE "quizId" = q.id) as question_count,
+            COALESCE(
+              (
+                SELECT json_agg(
+                  json_build_object(
+                    'courseId', a."courseId",
+                    'courseTitle', lc.title,
+                    'courseTitleAr', lc.title_ar,
+                    'position', a.position
+                  )
+                  ORDER BY a.position ASC
+                )
+                FROM "QuizCourseAssignment" a
+                JOIN "Course" lc ON lc.id = a."courseId"
+                WHERE a."quizId" = q.id
+              ),
+              '[]'::json
+            ) as linked_courses
+          FROM "Quiz" q
+          JOIN "Course" c ON c.id = q."courseId"
+          WHERE c."userId" = ${userId} OR c.created_by_id = ${userId}
+          ORDER BY c.title ASC, q.title ASC
+        `
+    : isStaffWide
+      ? await sql`
+          SELECT q.id, q.title,
+            COALESCE(q.quiz_type, 'NORMAL') as quiz_type,
+            q.course_id as owner_course_id,
+            c.title as owner_course_title, c.title_ar as owner_course_title_ar,
+            (SELECT COUNT(*)::int FROM "Question" WHERE quiz_id = q.id) as question_count,
+            COALESCE(
+              (
+                SELECT json_agg(
+                  json_build_object(
+                    'courseId', a."courseId",
+                    'courseTitle', lc.title,
+                    'courseTitleAr', lc.title_ar,
+                    'position', a.position
+                  )
+                  ORDER BY a.position ASC
+                )
+                FROM "QuizCourseAssignment" a
+                JOIN "Course" lc ON lc.id = a."courseId"
+                WHERE a."quizId" = q.id
+              ),
+              '[]'::json
+            ) as linked_courses
+          FROM "Quiz" q
+          JOIN "Course" c ON c.id = q.course_id
+          ORDER BY c.title ASC, q.title ASC
+        `
+      : await sql`
+          SELECT q.id, q.title,
+            COALESCE(q.quiz_type, 'NORMAL') as quiz_type,
+            q.course_id as owner_course_id,
+            c.title as owner_course_title, c.title_ar as owner_course_title_ar,
+            (SELECT COUNT(*)::int FROM "Question" WHERE quiz_id = q.id) as question_count,
+            COALESCE(
+              (
+                SELECT json_agg(
+                  json_build_object(
+                    'courseId', a."courseId",
+                    'courseTitle', lc.title,
+                    'courseTitleAr', lc.title_ar,
+                    'position', a.position
+                  )
+                  ORDER BY a.position ASC
+                )
+                FROM "QuizCourseAssignment" a
+                JOIN "Course" lc ON lc.id = a."courseId"
+                WHERE a."quizId" = q.id
+              ),
+              '[]'::json
+            ) as linked_courses
+          FROM "Quiz" q
+          JOIN "Course" c ON c.id = q.course_id
+          WHERE c.created_by_id = ${userId}
+          ORDER BY c.title ASC, q.title ASC
+        `;
+
+  return (rows as Record<string, unknown>[]).map((r) => ({
+    id: String(r.id),
+    title: String(r.title ?? ""),
+    quizType: normalizeQuizType(r.quiz_type),
+    ownerCourseId: String(r.owner_course_id ?? ""),
+    ownerCourseTitle: String(r.owner_course_title ?? ""),
+    ownerCourseTitleAr: r.owner_course_title_ar != null ? String(r.owner_course_title_ar) : null,
+    questionCount: Number(r.question_count ?? 0),
+    linkedCourses: parseLinkedCoursesJson(r.linked_courses),
+  }));
+}
+
+export async function getQuizOwnerCourseId(quizId: string): Promise<string | null> {
+  await ensureQuizFeaturesSchema();
+  const legacy = (await detectSchemaMode(sql)) === "legacy";
+  const rows = legacy
+    ? await sql`SELECT "courseId" FROM "Quiz" WHERE id = ${quizId} LIMIT 1`
+    : await sql`SELECT course_id FROM "Quiz" WHERE id = ${quizId} LIMIT 1`;
+  const row = rows[0] as Record<string, unknown> | undefined;
+  if (!row) return null;
+  return String(row.courseId ?? row.course_id ?? "");
+}
+
+export async function getCourseCreatedById(courseId: string): Promise<string | null> {
+  const rows = await sql`SELECT * FROM "Course" WHERE id = ${courseId} LIMIT 1`;
+  const row = rows[0] as Record<string, unknown> | undefined;
+  if (!row) return null;
+  const createdBy = row.created_by_id ?? row.userId;
+  return createdBy != null ? String(createdBy) : null;
+}
+
+export async function getCourseAssignedTeacherId(courseId: string): Promise<string | null> {
+  await ensureCourseAssignedTeacherColumn();
+  const rows = await sql`SELECT assigned_teacher_id FROM "Course" WHERE id = ${courseId} LIMIT 1`;
+  const row = rows[0] as { assigned_teacher_id?: unknown } | undefined;
+  if (!row?.assigned_teacher_id) return null;
+  return String(row.assigned_teacher_id);
+}
+
+export async function getCourseManageIds(
+  courseId: string,
+): Promise<{ createdById: string | null; assignedTeacherId: string | null }> {
+  await ensureCourseAssignedTeacherColumn();
+  const rows = await sql`SELECT created_by_id, assigned_teacher_id, "userId" FROM "Course" WHERE id = ${courseId} LIMIT 1`;
+  const row = rows[0] as Record<string, unknown> | undefined;
+  if (!row) return { createdById: null, assignedTeacherId: null };
+  const createdBy = row.created_by_id ?? row.userId;
+  return {
+    createdById: createdBy != null ? String(createdBy) : null,
+    assignedTeacherId:
+      row.assigned_teacher_id != null ? String(row.assigned_teacher_id) : null,
+  };
+}
+
+/** Replace linked courses for a quiz (quiz-centric view). Owner course is always excluded. */
+export async function syncQuizLinkedCourses(quizId: string, linkedCourseIds: string[]): Promise<void> {
+  await ensureQuizFeaturesSchema();
+  const ownerCourseId = await getQuizOwnerCourseId(quizId);
+  if (!ownerCourseId) throw new Error("الاختبار غير موجود");
+
+  const uniqueIds = [
+    ...new Set(
+      linkedCourseIds.map((id) => id.trim()).filter((id) => id && id !== ownerCourseId),
+    ),
+  ];
+
+  await sql`DELETE FROM "QuizCourseAssignment" WHERE "quizId" = ${quizId}`;
+
+  let position = 0;
+  for (const courseId of uniqueIds) {
+    const courseRows = await sql`SELECT id FROM "Course" WHERE id = ${courseId} LIMIT 1`;
+    if (!courseRows[0]) continue;
+    position += 1;
+    const id = generateId();
+    await sql`
+      INSERT INTO "QuizCourseAssignment" (id, "quizId", "courseId", position, updated_at)
+      VALUES (${id}, ${quizId}, ${courseId}, ${position}, NOW())
+    `;
+  }
 }
 
 // ----- Enrollment -----
 export async function getEnrollment(userId: string, courseId: string): Promise<Enrollment | null> {
+  if ((await detectSchemaMode(sql)) === "legacy") {
+    const rows = await sql`
+      SELECT * FROM "Purchase"
+      WHERE "userId" = ${userId} AND "courseId" = ${courseId} AND status = 'ACTIVE'
+      LIMIT 1
+    `;
+    const row = rows[0] as Record<string, unknown> | undefined;
+    return row ? mapLegacyPurchaseToEnrollment(row) : null;
+  }
   const rows = await sql`
     SELECT * FROM "Enrollment" WHERE user_id = ${userId} AND course_id = ${courseId} LIMIT 1
   `;
@@ -3864,6 +5359,20 @@ export async function getEnrollment(userId: string, courseId: string): Promise<E
 }
 
 export async function createEnrollment(userId: string, courseId: string): Promise<Enrollment> {
+  if ((await detectSchemaMode(sql)) === "legacy") {
+    const id = randomUUID();
+    await sql`
+      INSERT INTO "Purchase" (id, "userId", "courseId", status, "createdAt", "updatedAt")
+      VALUES (${id}, ${userId}, ${courseId}, 'ACTIVE', NOW(), NOW())
+      ON CONFLICT ("userId", "courseId") DO UPDATE SET status = 'ACTIVE', "updatedAt" = NOW()
+    `;
+    const rows = await sql`
+      SELECT * FROM "Purchase" WHERE "userId" = ${userId} AND "courseId" = ${courseId} LIMIT 1
+    `;
+    const row = rows[0] as Record<string, unknown> | undefined;
+    if (!row) throw new Error("فشل إنشاء التسجيل");
+    return mapLegacyPurchaseToEnrollment(row);
+  }
   const id = generateId();
   await sql`
     INSERT INTO "Enrollment" (id, user_id, course_id)
@@ -3876,6 +5385,10 @@ export async function createEnrollment(userId: string, courseId: string): Promis
 }
 
 export async function deleteEnrollment(userId: string, courseId: string): Promise<void> {
+  if ((await detectSchemaMode(sql)) === "legacy") {
+    await sql`DELETE FROM "Purchase" WHERE "userId" = ${userId} AND "courseId" = ${courseId}`;
+    return;
+  }
   await sql`DELETE FROM "Enrollment" WHERE user_id = ${userId} AND course_id = ${courseId}`;
 }
 
@@ -3966,6 +5479,7 @@ export async function listActivationCodesForTeacher(
   teacherId: string,
   courseId?: string | null
 ): Promise<ActivationCodeWithCourse[]> {
+  await ensureCourseAssignedTeacherColumn();
   const cid = courseId?.trim() || null;
   const rows = cid
     ? await sql`
@@ -3973,7 +5487,7 @@ export async function listActivationCodesForTeacher(
                (SELECT COUNT(*)::int FROM "ActivationCodeLesson" acl WHERE acl.activation_code_id = ac.id) as lesson_count,
                (SELECT COUNT(*)::int FROM "ActivationCodeQuiz" acq WHERE acq.activation_code_id = ac.id) as quiz_count
         FROM "ActivationCode" ac
-        JOIN "Course" c ON c.id = ac.course_id AND c.created_by_id = ${teacherId}
+        JOIN "Course" c ON c.id = ac.course_id AND (c.created_by_id = ${teacherId} OR c.assigned_teacher_id = ${teacherId})
         WHERE ac.course_id = ${cid}
         ORDER BY ac.created_at DESC
       `
@@ -3982,7 +5496,7 @@ export async function listActivationCodesForTeacher(
                (SELECT COUNT(*)::int FROM "ActivationCodeLesson" acl WHERE acl.activation_code_id = ac.id) as lesson_count,
                (SELECT COUNT(*)::int FROM "ActivationCodeQuiz" acq WHERE acq.activation_code_id = ac.id) as quiz_count
         FROM "ActivationCode" ac
-        JOIN "Course" c ON c.id = ac.course_id AND c.created_by_id = ${teacherId}
+        JOIN "Course" c ON c.id = ac.course_id AND (c.created_by_id = ${teacherId} OR c.assigned_teacher_id = ${teacherId})
         ORDER BY ac.created_at DESC
       `;
   return (rows as Record<string, unknown>[]).map((r) => rowToCamel(r) as ActivationCodeWithCourse);
@@ -4080,6 +5594,9 @@ export async function hasPartialCourseAccess(userId: string, courseId: string): 
 
 /** دورات الطالب: المسجّل فيها + الدورات المتاحة عبر أكواد (حصص/اختبارات محددة) + كل الدورات المدفوعة المنشورة عند اشتراك منصة نشط */
 export async function getAccessibleCoursesForUser(userId: string): Promise<(Course & { category?: Category })[]> {
+  if ((await detectSchemaMode(sql)) === "legacy") {
+    return getEnrolledCoursesForUser(userId);
+  }
   await ensurePlatformSubscriptionSchema();
   await ensureLessonRatingsSchema();
   const rows = await sql`
@@ -4147,7 +5664,38 @@ export async function getLessonRatingSummary(
       userRating: null,
     };
   }
-  const rows = await sql`
+  const rows = await (async () => {
+    if (lessonRatingsUseChapterTable) {
+      return sql`
+        SELECT
+          ch.id AS lesson_id,
+          ch."courseId" AS course_id,
+          (SELECT AVG(r.rating)::float8 FROM "LessonRating" r WHERE r.lesson_id = ch.id) AS lesson_avg_rating,
+          (SELECT COUNT(*)::int FROM "LessonRating" r WHERE r.lesson_id = ch.id) AS lesson_rating_count,
+          (
+            SELECT AVG(r.rating)::float8
+            FROM "LessonRating" r
+            JOIN "Chapter" lx ON lx.id = r.lesson_id
+            WHERE lx."courseId" = ch."courseId"
+          ) AS course_avg_rating,
+          (
+            SELECT COUNT(*)::int
+            FROM "LessonRating" r
+            JOIN "Chapter" lx ON lx.id = r.lesson_id
+            WHERE lx."courseId" = ch."courseId"
+          ) AS course_rating_count,
+          (
+            SELECT r.rating::int
+            FROM "LessonRating" r
+            WHERE r.lesson_id = ch.id AND r.user_id = ${userId ?? null}
+            LIMIT 1
+          ) AS user_rating
+        FROM "Chapter" ch
+        WHERE ch.id = ${lessonId}
+        LIMIT 1
+      `;
+    }
+    return sql`
     SELECT
       l.id AS lesson_id,
       l.course_id,
@@ -4175,6 +5723,7 @@ export async function getLessonRatingSummary(
     WHERE l.id = ${lessonId}
     LIMIT 1
   `;
+  })();
   const row = rows[0] as
     | {
         lesson_id?: string;
@@ -4245,9 +5794,14 @@ let homeworkSubmissionSchemaEnsured = false;
 /** يطابق scripts/add-homework.sql و add-homework-lesson.sql — إنشاء تلقائي إن لم يُشغَّل السكربت يدوياً */
 async function ensureHomeworkSubmissionSchema(): Promise<void> {
   if (homeworkSubmissionSchemaEnsured) return;
+  const legacy = (await detectSchemaMode(sql)) === "legacy";
   try {
     await sql`ALTER TABLE "Course" ADD COLUMN IF NOT EXISTS accepts_homework BOOLEAN NOT NULL DEFAULT false`;
-    await sql`ALTER TABLE "Lesson" ADD COLUMN IF NOT EXISTS accepts_homework BOOLEAN NOT NULL DEFAULT false`;
+    if (legacy) {
+      await sql`ALTER TABLE "Chapter" ADD COLUMN IF NOT EXISTS accepts_homework BOOLEAN NOT NULL DEFAULT false`;
+    } else {
+      await sql`ALTER TABLE "Lesson" ADD COLUMN IF NOT EXISTS accepts_homework BOOLEAN NOT NULL DEFAULT false`;
+    }
     await sql`
       CREATE TABLE IF NOT EXISTS "HomeworkSubmission" (
         id            TEXT PRIMARY KEY,
@@ -4263,9 +5817,15 @@ async function ensureHomeworkSubmissionSchema(): Promise<void> {
     await sql`CREATE INDEX IF NOT EXISTS "HomeworkSubmission_course_id_idx" ON "HomeworkSubmission"(course_id)`;
     await sql`CREATE INDEX IF NOT EXISTS "HomeworkSubmission_user_id_idx" ON "HomeworkSubmission"(user_id)`;
     await sql`CREATE INDEX IF NOT EXISTS "HomeworkSubmission_created_at_idx" ON "HomeworkSubmission"(created_at)`;
-    await sql`
-      ALTER TABLE "HomeworkSubmission" ADD COLUMN IF NOT EXISTS lesson_id TEXT REFERENCES "Lesson"(id) ON DELETE CASCADE
-    `;
+    if (legacy) {
+      await sql`
+        ALTER TABLE "HomeworkSubmission" ADD COLUMN IF NOT EXISTS lesson_id TEXT REFERENCES "Chapter"(id) ON DELETE CASCADE
+      `;
+    } else {
+      await sql`
+        ALTER TABLE "HomeworkSubmission" ADD COLUMN IF NOT EXISTS lesson_id TEXT REFERENCES "Lesson"(id) ON DELETE CASCADE
+      `;
+    }
     await sql`CREATE INDEX IF NOT EXISTS "HomeworkSubmission_lesson_id_idx" ON "HomeworkSubmission"(lesson_id)`;
     homeworkSubmissionSchemaEnsured = true;
   } catch {
@@ -4388,6 +5948,7 @@ export async function listHomeworkSubmissionsForTeacher(
   studentNameSearch?: string | null,
 ): Promise<HomeworkSubmissionWithDetails[]> {
   await ensureHomeworkSubmissionSchema();
+  await ensureCourseAssignedTeacherColumn();
   const search = studentNameSearch?.trim();
   const likePattern = search ? "%" + search + "%" : null;
   if (likePattern) {
@@ -4395,7 +5956,7 @@ export async function listHomeworkSubmissionsForTeacher(
       SELECT hs.*, c.title as course_title, c.title_ar as course_title_ar, u.name as user_name,
              l.title as lesson_title, l.title_ar as lesson_title_ar
       FROM "HomeworkSubmission" hs
-      JOIN "Course" c ON c.id = hs.course_id AND c.created_by_id = ${teacherId}
+      JOIN "Course" c ON c.id = hs.course_id AND (c.created_by_id = ${teacherId} OR c.assigned_teacher_id = ${teacherId})
       JOIN "User" u ON u.id = hs.user_id
       LEFT JOIN "Lesson" l ON l.id = hs.lesson_id
       WHERE u.name ILIKE ${likePattern}
@@ -4407,7 +5968,7 @@ export async function listHomeworkSubmissionsForTeacher(
     SELECT hs.*, c.title as course_title, c.title_ar as course_title_ar, u.name as user_name,
            l.title as lesson_title, l.title_ar as lesson_title_ar
     FROM "HomeworkSubmission" hs
-    JOIN "Course" c ON c.id = hs.course_id AND c.created_by_id = ${teacherId}
+    JOIN "Course" c ON c.id = hs.course_id AND (c.created_by_id = ${teacherId} OR c.assigned_teacher_id = ${teacherId})
     JOIN "User" u ON u.id = hs.user_id
     LEFT JOIN "Lesson" l ON l.id = hs.lesson_id
     ORDER BY hs.created_at DESC
@@ -4420,13 +5981,14 @@ export async function deleteHomeworkSubmissionsByIdsForTeacher(
   ids: string[],
 ): Promise<number> {
   await ensureHomeworkSubmissionSchema();
+  await ensureCourseAssignedTeacherColumn();
   if (ids.length === 0) return 0;
   let n = 0;
   for (const id of ids) {
     const rows = await sql`
       DELETE FROM "HomeworkSubmission" hs
       USING "Course" c
-      WHERE hs.id = ${id} AND hs.course_id = c.id AND c.created_by_id = ${teacherId}
+      WHERE hs.id = ${id} AND hs.course_id = c.id AND (c.created_by_id = ${teacherId} OR c.assigned_teacher_id = ${teacherId})
       RETURNING hs.id
     `;
     n += rows.length;
@@ -4475,25 +6037,134 @@ export async function deleteAllHomeworkSubmissions(): Promise<void> {
 
 // ----- QuizAttempt (يتطلب تشغيل scripts/add-quiz-attempts.sql) -----
 export async function countQuizAttemptsByUserAndCourse(userId: string, courseId: string): Promise<number> {
+  return countSubmittedQuizAttemptsByUserAndCourse(userId, courseId);
+}
+
+/** Count submitted quiz attempts (excludes in-progress rows started but not finished). */
+export async function countSubmittedQuizAttemptsByUserAndCourse(
+  userId: string,
+  courseId: string,
+): Promise<number> {
+  await ensureQuizFeaturesSchema();
+  const legacy = (await detectSchemaMode(sql)) === "legacy";
+  const rows = legacy
+    ? await sql`
+        SELECT COUNT(*)::int as c FROM "QuizAttempt" qa
+        JOIN "Quiz" q ON q.id = qa.quiz_id
+        WHERE qa.user_id = ${userId}
+          AND qa.total_questions >= 1
+          AND (
+            q."courseId" = ${courseId}
+            OR EXISTS (
+              SELECT 1 FROM "QuizCourseAssignment" a
+              WHERE a."quizId" = q.id AND a."courseId" = ${courseId}
+            )
+          )
+      `
+    : await sql`
+        SELECT COUNT(*)::int as c FROM "QuizAttempt" qa
+        JOIN "Quiz" q ON q.id = qa.quiz_id
+        WHERE qa.user_id = ${userId}
+          AND qa.total_questions >= 1
+          AND (
+            q.course_id = ${courseId}
+            OR EXISTS (
+              SELECT 1 FROM "QuizCourseAssignment" a
+              WHERE a."quizId" = q.id AND a."courseId" = ${courseId}
+            )
+          )
+      `;
+  return Number((rows[0] as { c: number })?.c ?? 0);
+}
+
+/** Count submitted attempts for a single quiz. */
+export async function countSubmittedQuizAttemptsByUserAndQuiz(
+  userId: string,
+  quizId: string,
+): Promise<number> {
+  await ensureQuizFeaturesSchema();
   const rows = await sql`
-    SELECT COUNT(*)::int as c FROM "QuizAttempt" qa
-    JOIN "Quiz" q ON q.id = qa.quiz_id
-    WHERE qa.user_id = ${userId} AND q.course_id = ${courseId}
+    SELECT COUNT(*)::int as c FROM "QuizAttempt"
+    WHERE user_id = ${userId} AND quiz_id = ${quizId} AND total_questions >= 1
   `;
   return Number((rows[0] as { c: number })?.c ?? 0);
+}
+
+export async function getInProgressQuizAttemptId(
+  userId: string,
+  quizId: string,
+): Promise<string | null> {
+  await ensureQuizFeaturesSchema();
+  const rows = await sql`
+    SELECT id FROM "QuizAttempt"
+    WHERE user_id = ${userId} AND quiz_id = ${quizId} AND total_questions < 1
+    ORDER BY created_at DESC
+    LIMIT 1
+  `;
+  const row = rows[0] as { id: string } | undefined;
+  return row?.id ? String(row.id) : null;
+}
+
+export async function getQuizAttemptById(
+  attemptId: string,
+  userId: string,
+): Promise<{
+  id: string;
+  quizId: string;
+  score: number;
+  totalQuestions: number;
+  answers: Record<string, string>;
+  createdAt: Date;
+  updatedAt: Date;
+} | null> {
+  await ensureQuizFeaturesSchema();
+  const rows = await sql`
+    SELECT id, quiz_id, score, total_questions, answers_json, created_at, updated_at
+    FROM "QuizAttempt"
+    WHERE id = ${attemptId} AND user_id = ${userId} AND total_questions >= 1
+    LIMIT 1
+  `;
+  const row = rows[0] as Record<string, unknown> | undefined;
+  if (!row) return null;
+  let answers: Record<string, string> = {};
+  const rawAnswers = row.answers_json;
+  if (typeof rawAnswers === "string" && rawAnswers.trim()) {
+    try {
+      const parsed = JSON.parse(rawAnswers) as unknown;
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        answers = Object.fromEntries(
+          Object.entries(parsed as Record<string, unknown>).map(([k, v]) => [k, String(v)]),
+        );
+      }
+    } catch {
+      answers = {};
+    }
+  }
+  return {
+    id: String(row.id),
+    quizId: String(row.quiz_id),
+    score: Number(row.score ?? 0),
+    totalQuestions: Number(row.total_questions ?? 0),
+    answers,
+    createdAt: row.created_at as Date,
+    updatedAt: (row.updated_at ?? row.created_at) as Date,
+  };
 }
 
 export async function createQuizAttempt(
   userId: string,
   quizId: string,
   score: number,
-  totalQuestions: number
-): Promise<void> {
+  totalQuestions: number,
+  answersJson?: string | null,
+): Promise<string> {
+  await ensureQuizFeaturesSchema();
   const id = generateId();
   await sql`
-    INSERT INTO "QuizAttempt" (id, user_id, quiz_id, score, total_questions, updated_at)
-    VALUES (${id}, ${userId}, ${quizId}, ${score}, ${totalQuestions}, NOW())
+    INSERT INTO "QuizAttempt" (id, user_id, quiz_id, score, total_questions, answers_json, updated_at)
+    VALUES (${id}, ${userId}, ${quizId}, ${score}, ${totalQuestions}, ${answersJson ?? null}, NOW())
   `;
+  return id;
 }
 
 /** إنشاء محاولة وإرجاع معرّفها (لاستخدامها عند بدء الاختبار) */
@@ -4518,15 +6189,72 @@ export async function updateQuizAttemptById(params: {
   quizId: string;
   score: number;
   totalQuestions: number;
+  answersJson?: string | null;
 }): Promise<boolean> {
-  const { attemptId, userId, quizId, score, totalQuestions } = params;
+  await ensureQuizFeaturesSchema();
+  const { attemptId, userId, quizId, score, totalQuestions, answersJson } = params;
   const rows = await sql`
     UPDATE "QuizAttempt"
-    SET score = ${score}, total_questions = ${totalQuestions}, updated_at = NOW()
+    SET score = ${score},
+        total_questions = ${totalQuestions},
+        answers_json = ${answersJson ?? null},
+        updated_at = NOW()
     WHERE id = ${attemptId} AND user_id = ${userId} AND quiz_id = ${quizId}
     RETURNING id
   `;
   return rows.length > 0;
+}
+
+export async function getLatestQuizAttempt(
+  userId: string,
+  quizId: string,
+): Promise<{ score: number; totalQuestions: number; createdAt: Date } | null> {
+  const rows = await sql`
+    SELECT score, total_questions, created_at, updated_at
+    FROM "QuizAttempt"
+    WHERE user_id = ${userId} AND quiz_id = ${quizId} AND total_questions >= 1
+    ORDER BY COALESCE(updated_at, created_at) DESC
+    LIMIT 1
+  `;
+  const row = rows[0] as Record<string, unknown> | undefined;
+  if (!row) return null;
+  const totalQuestions = Number(row.total_questions ?? 0);
+  if (totalQuestions < 1) return null;
+  return {
+    score: Number(row.score ?? 0),
+    totalQuestions,
+    createdAt: (row.updated_at ?? row.created_at) as Date,
+  };
+}
+
+export async function isRemedialQuizUnlocked(userId: string, quiz: Record<string, unknown>): Promise<boolean> {
+  const quizType = normalizeQuizType(quiz.quizType ?? quiz.quiz_type);
+  if (quizType !== "REMEDIAL") return true;
+  const parentQuizId = String(quiz.parentQuizId ?? quiz.parent_quiz_id ?? "").trim();
+  if (!parentQuizId) return false;
+  const { submitted, passed } = await getQuizProgressSets(userId, [parentQuizId]);
+  if (passed.has(parentQuizId)) return false;
+  return submitted.has(parentQuizId);
+}
+
+const STAFF_ROLES = new Set(["ADMIN", "ASSISTANT_ADMIN", "TEACHER"]);
+
+export async function filterQuizzesForStudent(
+  quizzes: Array<Record<string, unknown>>,
+  userId: string | null | undefined,
+  role: string | null | undefined,
+): Promise<Array<Record<string, unknown>>> {
+  if (!userId || (role && STAFF_ROLES.has(role))) return quizzes;
+  const visible: Array<Record<string, unknown>> = [];
+  for (const quiz of quizzes) {
+    const quizType = normalizeQuizType(quiz.quizType ?? quiz.quiz_type);
+    if (quizType === "REMEDIAL") {
+      if (await isRemedialQuizUnlocked(userId, quiz)) visible.push(quiz);
+    } else {
+      visible.push(quiz);
+    }
+  }
+  return visible;
 }
 
 export async function getQuizAttemptsByUserId(userId: string): Promise<
@@ -4601,6 +6329,7 @@ export async function getQuizAttemptsForTeacher(teacherId: string): Promise<
     createdAt: Date;
   }>
 > {
+  await ensureCourseAssignedTeacherColumn();
   const rows = await sql`
     SELECT u.id as user_id, u.name as user_name, u.email as user_email,
            qa.quiz_id, q.title as quiz_title, c.id as course_id, c.title as course_title,
@@ -4608,7 +6337,7 @@ export async function getQuizAttemptsForTeacher(teacherId: string): Promise<
     FROM "QuizAttempt" qa
     JOIN "User" u ON u.id = qa.user_id
     JOIN "Quiz" q ON q.id = qa.quiz_id
-    JOIN "Course" c ON c.id = q.course_id AND c.created_by_id = ${teacherId}
+    JOIN "Course" c ON c.id = q.course_id AND (c.created_by_id = ${teacherId} OR c.assigned_teacher_id = ${teacherId})
     ORDER BY qa.created_at DESC
   `;
   return (rows as Record<string, unknown>[]).map((r) => ({
@@ -4627,27 +6356,41 @@ export async function getQuizAttemptsForTeacher(teacherId: string): Promise<
 
 /** إجمالي أرباح المنصة (كورسات + اشتراكات + متجر) */
 export async function getTotalPlatformEarnings(): Promise<number> {
-  const [coursesTotal, subscriptionsTotal, storeTotal] = await Promise.all([
-    sql`SELECT COALESCE(SUM(amount), 0)::float as total FROM "Payment"`
-      .then((rows) => Number((rows[0] as { total: number })?.total ?? 0))
-      .catch(() => 0),
-    sql`SELECT COALESCE(SUM(price_paid), 0)::float as total FROM "UserPlatformSubscription"`
-      .then((rows) => Number((rows[0] as { total: number })?.total ?? 0))
-      .catch(() => 0),
-    sql`SELECT COALESCE(SUM(price_paid), 0)::float as total FROM "UserStorePurchase"`
-      .then((rows) => Number((rows[0] as { total: number })?.total ?? 0))
-      .catch(() => 0),
-  ]);
+  let coursesTotal = 0;
+  let subscriptionsTotal = 0;
+  let storeTotal = 0;
+
+  try {
+    const rows = await sql`SELECT COALESCE(SUM(amount), 0)::float as total FROM "Payment"`;
+    coursesTotal = Number((rows[0] as { total: number })?.total ?? 0);
+  } catch {
+    coursesTotal = 0;
+  }
+
+  try {
+    const rows = await sql`SELECT COALESCE(SUM(price_paid), 0)::float as total FROM "UserPlatformSubscription"`;
+    subscriptionsTotal = Number((rows[0] as { total: number })?.total ?? 0);
+  } catch {
+    subscriptionsTotal = 0;
+  }
+
+  try {
+    const rows = await sql`SELECT COALESCE(SUM(price_paid), 0)::float as total FROM "UserStorePurchase"`;
+    storeTotal = Number((rows[0] as { total: number })?.total ?? 0);
+  } catch {
+    storeTotal = 0;
+  }
 
   return coursesTotal + subscriptionsTotal + storeTotal;
 }
 
 export async function getTotalEarningsForTeacher(teacherId: string): Promise<number> {
+  await ensureCourseAssignedTeacherColumn();
   try {
     const rows = await sql`
       SELECT COALESCE(SUM(p.amount), 0)::float as total
       FROM "Payment" p
-      INNER JOIN "Course" c ON c.id = p.course_id AND c.created_by_id = ${teacherId}
+      INNER JOIN "Course" c ON c.id = p.course_id AND (c.created_by_id = ${teacherId} OR c.assigned_teacher_id = ${teacherId})
     `;
     return Number((rows[0] as { total: number })?.total ?? 0);
   } catch {
@@ -4689,10 +6432,11 @@ export async function getLiveStreamsAll(): Promise<(LiveStream & { course?: { id
 export async function getLiveStreamsForTeacher(
   teacherId: string,
 ): Promise<(LiveStream & { course?: { id: string; title: string; slug: string } })[]> {
+  await ensureCourseAssignedTeacherColumn();
   const rows = await sql`
     SELECT ls.*, c.id as c_id, c.title as c_title, c.slug as c_slug
     FROM "LiveStream" ls
-    INNER JOIN "Course" c ON c.id = ls.course_id AND c.created_by_id = ${teacherId}
+    INNER JOIN "Course" c ON c.id = ls.course_id AND (c.created_by_id = ${teacherId} OR c.assigned_teacher_id = ${teacherId})
     ORDER BY ls.scheduled_at DESC
   `;
   return (rows as Record<string, unknown>[]).map((r) => {
@@ -4761,6 +6505,15 @@ export async function deleteLiveStream(id: string): Promise<void> {
 }
 
 export async function getUsersByRole(role: UserRole): Promise<User[]> {
+  if ((await detectSchemaMode(sql)) === "legacy") {
+    const roles = legacyRolesForAppRole(role);
+    const rows = await sql`
+      SELECT * FROM "User"
+      WHERE role = ANY(${roles})
+      ORDER BY "createdAt" DESC
+    `;
+    return (rows as Record<string, unknown>[]).map((r) => mapLegacyUserRow(r));
+  }
   const rows = await sql`SELECT * FROM "User" WHERE role = ${role} ORDER BY created_at DESC`;
   return rows as User[];
 }
@@ -4775,11 +6528,23 @@ export async function deleteTeacherUser(userId: string): Promise<void> {
 
 /** طلاب لديهم تسجيل في أي كورس أنشأه المدرس */
 export async function getStudentsEnrolledInTeacherCourses(teacherId: string): Promise<User[]> {
+  await ensureCourseAssignedTeacherColumn();
+  if ((await detectSchemaMode(sql)) === "legacy") {
+    const rows = await sql`
+      SELECT DISTINCT u.*
+      FROM "User" u
+      INNER JOIN "Purchase" p ON p."userId" = u.id AND p.status = 'ACTIVE'
+      INNER JOIN "Course" c ON c.id = p."courseId" AND c."userId" = ${teacherId}
+      WHERE u.role IN ('USER', 'STUDENT')
+      ORDER BY u."fullName" ASC
+    `;
+    return (rows as Record<string, unknown>[]).map((r) => mapLegacyUserRow(r));
+  }
   const rows = await sql`
     SELECT DISTINCT u.*
     FROM "User" u
     INNER JOIN "Enrollment" e ON e.user_id = u.id
-    INNER JOIN "Course" c ON c.id = e.course_id AND c.created_by_id = ${teacherId}
+    INNER JOIN "Course" c ON c.id = e.course_id AND (c.created_by_id = ${teacherId} OR c.assigned_teacher_id = ${teacherId})
     WHERE u.role = 'STUDENT'
     ORDER BY u.name ASC
   `;
@@ -4787,6 +6552,24 @@ export async function getStudentsEnrolledInTeacherCourses(teacherId: string): Pr
 }
 
 export async function getEnrollmentsWithCourseByUserId(userId: string): Promise<Array<Enrollment & { course: { id: string; title: string; titleAr: string | null; slug: string } }>> {
+  if ((await detectSchemaMode(sql)) === "legacy") {
+    const rows = await sql`
+      SELECT p.*, c.id as c_id, c.title as c_title
+      FROM "Purchase" p
+      JOIN "Course" c ON c.id = p."courseId"
+      WHERE p."userId" = ${userId} AND p.status = 'ACTIVE'
+      ORDER BY p."createdAt" DESC
+    `;
+    return (rows as Record<string, unknown>[]).map((r) => ({
+      ...mapLegacyPurchaseToEnrollment(r),
+      course: {
+        id: String(r.c_id),
+        title: String(r.c_title),
+        titleAr: null,
+        slug: String(r.c_id),
+      },
+    }));
+  }
   const rows = await sql`
     SELECT e.*, c.id as c_id, c.title as c_title, c.title_ar as c_title_ar, c.slug as c_slug
     FROM "Enrollment" e
@@ -4811,6 +6594,16 @@ export async function getEnrollmentsWithCourseByUserId(userId: string): Promise<
 /** دورات الطالب المسجّل فيها — بنفس شكل الكورسات في الصفحة الرئيسية (للعرض كبطاقات) */
 export async function getEnrolledCoursesForUser(userId: string): Promise<(Course & { category?: Category })[]> {
   await ensureLessonRatingsSchema();
+  if ((await detectSchemaMode(sql)) === "legacy") {
+    const rows = await sql`
+      SELECT c.*
+      FROM "Purchase" p
+      JOIN "Course" c ON c.id = p."courseId"
+      WHERE p."userId" = ${userId} AND p.status = 'ACTIVE'
+      ORDER BY p."createdAt" DESC
+    `;
+    return (rows as Record<string, unknown>[]).map((r) => mapLegacyCourseRow(r)) as (Course & { category?: Category })[];
+  }
   const rows = await sql`
     SELECT c.*, ${courseRatingSelectSql()}, cat.id as cat_id, cat.name as cat_name, cat.name_ar as cat_name_ar, cat.slug as cat_slug
     FROM "Enrollment" e
@@ -4830,6 +6623,16 @@ export async function getEnrolledCoursesForUser(userId: string): Promise<(Course
 }
 
 export async function getUserByEmailExcludingId(email: string, excludeUserId: string): Promise<User | null> {
+  if ((await detectSchemaMode(sql)) === "legacy") {
+    const phone = email.replace(/@phone\.local$/i, "").replace(/\D/g, "");
+    const rows = await sql`
+      SELECT * FROM "User"
+      WHERE "phoneNumber" = ${phone} AND id != ${excludeUserId}
+      LIMIT 1
+    `;
+    const row = rows[0] as Record<string, unknown> | undefined;
+    return row ? mapLegacyUserRow(row) : null;
+  }
   const rows = await sql`SELECT * FROM "User" WHERE email = ${email} AND id != ${excludeUserId} LIMIT 1`;
   return (rows[0] as User) ?? null;
 }
@@ -4846,12 +6649,36 @@ export async function countCourses(): Promise<number> {
 }
 
 // ----- Conversation & Message (التواصل الخاص مع الطلبة) -----
+const PLATFORM_STAFF_ROLES = ["ADMIN", "ASSISTANT_ADMIN"] as const;
+
+/** محادثة مشتركة بين أدمن/مساعد أدمن والطالب — أو محادثة خاصة بالمدرس */
 export async function getOrCreateConversation(staffUserId: string, studentUserId: string): Promise<Conversation> {
-  const existing = await sql`
-    SELECT * FROM "Conversation" WHERE staff_user_id = ${staffUserId} AND student_user_id = ${studentUserId} LIMIT 1
-  `;
-  const row = existing[0] as Record<string, unknown> | undefined;
-  if (row) return rowToCamel(row) as Conversation;
+  const staff = await getUserById(staffUserId);
+  const isPlatformStaff = !!staff && PLATFORM_STAFF_ROLES.includes(staff.role as (typeof PLATFORM_STAFF_ROLES)[number]);
+
+  if (isPlatformStaff) {
+    // أدمن ومساعد الأدمن يشاركون نفس محادثة الطالب حتى تظهر الرسائل لأي حساب منهم
+    const shared = await sql`
+      SELECT c.*
+      FROM "Conversation" c
+      JOIN "User" s ON s.id = c.staff_user_id
+      WHERE c.student_user_id = ${studentUserId}
+        AND s.role IN ('ADMIN', 'ASSISTANT_ADMIN')
+      ORDER BY
+        (SELECT count(*)::int FROM "Message" m WHERE m.conversation_id = c.id) DESC,
+        c.updated_at DESC
+      LIMIT 1
+    `;
+    const sharedRow = shared[0] as Record<string, unknown> | undefined;
+    if (sharedRow) return rowToCamel(sharedRow) as Conversation;
+  } else {
+    const existing = await sql`
+      SELECT * FROM "Conversation" WHERE staff_user_id = ${staffUserId} AND student_user_id = ${studentUserId} LIMIT 1
+    `;
+    const row = existing[0] as Record<string, unknown> | undefined;
+    if (row) return rowToCamel(row) as Conversation;
+  }
+
   const id = generateId();
   await sql`
     INSERT INTO "Conversation" (id, staff_user_id, student_user_id, created_at, updated_at)
@@ -4867,20 +6694,44 @@ export async function getConversationById(conversationId: string): Promise<Conve
   return r ? (rowToCamel(r) as Conversation) : null;
 }
 
-/** محادثات الموظف مع الطلبة (للأدمن/مساعد) */
+/** محادثات الموظف مع الطلبة — للأدمن/المساعد: كل محادثات المنصة المشتركة */
 export async function getConversationsByStaffId(staffUserId: string): Promise<(Conversation & { studentName?: string })[]> {
-  const rows = await sql`
-    SELECT c.*, u.name as student_name
-    FROM "Conversation" c
-    JOIN "User" u ON u.id = c.student_user_id
-    WHERE c.staff_user_id = ${staffUserId}
-    ORDER BY c.updated_at DESC
-  `;
-  return (rows as Record<string, unknown>[]).map((r) => {
+  const staff = await getUserById(staffUserId);
+  const isPlatformStaff = !!staff && PLATFORM_STAFF_ROLES.includes(staff.role as (typeof PLATFORM_STAFF_ROLES)[number]);
+
+  const rows = isPlatformStaff
+    ? await sql`
+        SELECT DISTINCT ON (c.student_user_id) c.*, u.name as student_name
+        FROM "Conversation" c
+        JOIN "User" u ON u.id = c.student_user_id
+        JOIN "User" s ON s.id = c.staff_user_id
+        WHERE s.role IN ('ADMIN', 'ASSISTANT_ADMIN')
+        ORDER BY c.student_user_id,
+          (SELECT count(*)::int FROM "Message" m WHERE m.conversation_id = c.id) DESC,
+          c.updated_at DESC
+      `
+    : await sql`
+        SELECT c.*, u.name as student_name
+        FROM "Conversation" c
+        JOIN "User" u ON u.id = c.student_user_id
+        WHERE c.staff_user_id = ${staffUserId}
+        ORDER BY c.updated_at DESC
+      `;
+
+  const mapped = (rows as Record<string, unknown>[]).map((r) => {
     const { student_name, ...rest } = r;
     const conv = rowToCamel(rest) as Conversation;
     return { ...conv, studentName: student_name as string };
   });
+
+  if (isPlatformStaff) {
+    mapped.sort((a, b) => {
+      const ta = a.updatedAt ? new Date(a.updatedAt).getTime() : 0;
+      const tb = b.updatedAt ? new Date(b.updatedAt).getTime() : 0;
+      return tb - ta;
+    });
+  }
+  return mapped;
 }
 
 /** محادثات الطالب (الرسائل الواردة من الموظفين) */
@@ -4910,10 +6761,13 @@ export async function getStaffForStudentMessaging(): Promise<{ id: string; role:
 }
 
 export async function canUserAccessConversation(userId: string, role: UserRole, conversation: Conversation): Promise<boolean> {
-  if (role === "ADMIN" || role === "ASSISTANT_ADMIN" || role === "TEACHER") {
-    return conversation.staffUserId === userId;
-  }
   if (role === "STUDENT") return conversation.studentUserId === userId;
+  if (role === "TEACHER") return conversation.staffUserId === userId;
+  if (role === "ADMIN" || role === "ASSISTANT_ADMIN") {
+    if (conversation.staffUserId === userId) return true;
+    const staff = await getUserById(conversation.staffUserId);
+    return !!staff && PLATFORM_STAFF_ROLES.includes(staff.role as (typeof PLATFORM_STAFF_ROLES)[number]);
+  }
   return false;
 }
 

@@ -1,10 +1,9 @@
 import { notFound } from "next/navigation";
 import Link from "next/link";
-import { unstable_noStore } from "next/cache";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import {
-  getCourseWithContent,
+  getCourseWithContentCached,
   getEnrollment,
   getAllowedLessonIdsForUserCourse,
   getAllowedQuizIdsForUserCourse,
@@ -15,18 +14,17 @@ import {
   userHasActivePlatformSubscriptionForPaidCourse,
   getLatestPlatformSubscriptionExpiry,
 } from "@/lib/db";
+import { CourseContentProgressList } from "@/components/CourseContentProgressList";
+import { resolveCourseProgression } from "@/lib/course-progression-server";
 import { EnrollButton } from "./EnrollButton";
-import { getLocaleFromCookie, getServerTranslator } from "@/lib/i18n/server";
+import { getServerTranslator } from "@/lib/i18n/server";
 import { pickLocalizedText } from "@/lib/i18n/localized-field";
+import { isCourseSegmentId } from "@/lib/legacy-schema";
 
 type Props = { params: Promise<{ slug: string }> };
 
-/** عدم التخزين المؤقت — دائماً التحقق من وجود الدورة (تجنب 404 للدورات المحذوفة) */
-export const dynamic = "force-dynamic";
-export const revalidate = 0;
-
 function isCourseId(segment: string): boolean {
-  return /^c[a-z0-9]{24}$/i.test(segment);
+  return isCourseSegmentId(segment);
 }
 
 function decodeSlug(segment: string): string {
@@ -44,20 +42,18 @@ function normalizeSlugForUrl(s: string | null | undefined): string {
 }
 
 export async function generateMetadata({ params }: Props) {
-  const [t, locale] = await Promise.all([getServerTranslator(), getLocaleFromCookie()]);
+  const t = await getServerTranslator();
   const { slug: segment } = await params;
-  unstable_noStore();
   const decoded = decodeSlug(segment);
-  const data = await getCourseWithContent(decoded);
+  const data = await getCourseWithContentCached(decoded);
   const course = data?.course;
   if (!course) return { title: t("courses.notFoundCourse", "Course not found") };
   const courseTitle = pickLocalizedText(
-    locale,
+    null,
     (course as { titleAr?: string | null; title?: string | null }).titleAr ?? null,
     (course as { title?: string | null }).title ?? null,
   );
-  const courseDescription = pickLocalizedText(
-    locale,
+  const courseDescription = pickLocalizedText(null,
     (course as { shortDesc?: string | null; description?: string | null }).shortDesc ??
       (course as { description?: string | null }).description ??
       null,
@@ -72,13 +68,11 @@ export async function generateMetadata({ params }: Props) {
 }
 
 export default async function CoursePage({ params }: Props) {
-  unstable_noStore();
   const t = await getServerTranslator();
-  const locale = await getLocaleFromCookie();
   const { slug: segment } = await params;
   const decoded = decodeSlug(segment);
   const session = await getServerSession(authOptions);
-  let data: Awaited<ReturnType<typeof getCourseWithContent>> = null;
+  let data: Awaited<ReturnType<typeof getCourseWithContentCached>> = null;
   let isEnrolled = false;
   let allowedLessonIds: string[] = [];
   let allowedQuizIds: string[] = [];
@@ -87,7 +81,7 @@ export default async function CoursePage({ params }: Props) {
   let paidCourseCoveredBySubscription = false;
   let subscriptionExpiresAt: Date | null = null;
   try {
-    data = await getCourseWithContent(decoded);
+    data = await getCourseWithContentCached(decoded);
     if (data?.course && session?.user?.id && session.user.role === "STUDENT") {
       const [en, user, lessons, quizzes, fullAccess, subPaid] = await Promise.all([
         getEnrollment(session.user.id, data.course.id),
@@ -114,23 +108,31 @@ export default async function CoursePage({ params }: Props) {
   }
   if (!data?.course) notFound();
 
+  const role = session?.user?.role;
+  const isStaff = role === "ADMIN" || role === "ASSISTANT_ADMIN" || role === "TEACHER";
+  const progression = await resolveCourseProgression(
+    session?.user?.id,
+    role,
+    hasFullStudentAccess,
+    data.course.id,
+    data.lessons as Record<string, unknown>[],
+    data.quizzes as Record<string, unknown>[],
+  );
+
   const course = {
     ...data.course,
     lessons: data.lessons,
     quizzes: data.quizzes,
   };
-  const title = pickLocalizedText(
-    locale,
+  const title = pickLocalizedText(null,
     (course as { titleAr?: string | null; title?: string | null }).titleAr ?? null,
     (course as { title?: string | null }).title ?? null,
   );
-  const categoryName = pickLocalizedText(
-    locale,
+  const categoryName = pickLocalizedText(null,
     (course.category as { nameAr?: string | null; name?: string | null })?.nameAr ?? null,
     (course.category as { name?: string | null })?.name ?? null,
   );
-  const courseDescription = pickLocalizedText(
-    locale,
+  const courseDescription = pickLocalizedText(null,
     (course as { description?: string | null }).description ?? null,
     (course as { descriptionEn?: string | null; description_en?: string | null }).descriptionEn ??
       (course as { description_en?: string | null }).description_en ??
@@ -139,17 +141,15 @@ export default async function CoursePage({ params }: Props) {
   const canEnroll =
     session?.user?.role === "STUDENT" && !isEnrolled && !paidCourseCoveredBySubscription;
   const hasPartialAccess = allowedLessonIds.length > 0 || allowedQuizIds.length > 0;
-  const isStaff = session?.user?.role === "ADMIN" || session?.user?.role === "ASSISTANT_ADMIN";
   const canAccessContent =
     isStaff || hasPartialAccess || (session?.user?.role === "STUDENT" && hasFullStudentAccess);
-  const canAccessQuizzes = isStaff || (session?.user?.role === "STUDENT" && hasFullStudentAccess);
   const coursePrice = Number((course as Record<string, unknown>).price) || 0;
 
   const liveStreams = canAccessContent ? await getLiveStreamsByCourseId(course.id) : [];
   const homepageSettings = await getHomepageSettings();
   const formatStreamDate = (d: Date | string) => {
     const date = typeof d === "string" ? new Date(d) : d;
-    return new Intl.DateTimeFormat(locale === "ar" ? "ar-EG" : "en-US", { dateStyle: "medium", timeStyle: "short" }).format(date);
+    return new Intl.DateTimeFormat("ar-EG", { dateStyle: "medium", timeStyle: "short" }).format(date);
   };
 
   const isGuest = !session;
@@ -193,7 +193,7 @@ export default async function CoursePage({ params }: Props) {
               <div className="relative mb-4">
                 <img
                   src={homepageSettings.teacherImageUrl?.trim() || "/instructor.png"}
-                  alt={pickLocalizedText(locale, homepageSettings.heroTitle, homepageSettings.heroTitleEn) || "المدرس"}
+                  alt={pickLocalizedText(null, homepageSettings.heroTitle, homepageSettings.heroTitleEn) || "المدرس"}
                   className="h-32 w-32 border-2 border-black border-dotted object-cover"
                 />
                 <div className="absolute bottom-0 right-0 h-6 w-6 rounded-full border-4 border-[var(--color-surface)] bg-[var(--color-success)]" />
@@ -218,7 +218,7 @@ export default async function CoursePage({ params }: Props) {
               </div>
               <div className="mt-2 w-full border-t border-[var(--color-border)] pt-4">
                 <p className="text-sm text-[var(--color-muted)]">
-                  {pickLocalizedText(locale, homepageSettings.heroSlogan, homepageSettings.heroSloganEn) ||
+                  {pickLocalizedText(null, homepageSettings.heroSlogan, homepageSettings.heroSloganEn) ||
                     t("courses.allCoursesSubtitle", "Choose the right course and start learning step by step")}
                 </p>
               </div>
@@ -321,7 +321,7 @@ export default async function CoursePage({ params }: Props) {
             {paidCourseCoveredBySubscription && subscriptionExpiresAt && (
               <p className="mt-4 rounded-[var(--radius-btn)] border border-teal-500/40 bg-teal-500/10 px-4 py-2 text-sm text-teal-900 dark:text-teal-100">
                 {t("courses.viaPlatformSubscription", "You are viewing this course through platform subscription until")}{" "}
-                {new Intl.DateTimeFormat(locale === "ar" ? "ar-EG" : "en-US", { dateStyle: "medium", timeStyle: "short" }).format(subscriptionExpiresAt)}.
+                {new Intl.DateTimeFormat("ar-EG", { dateStyle: "medium", timeStyle: "short" }).format(subscriptionExpiresAt)}.
               </p>
             )}
 
@@ -331,91 +331,15 @@ export default async function CoursePage({ params }: Props) {
               </div>
             )}
 
-            {course.lessons.length > 0 && (
-              <div className="mt-10">
-                <h2 className="text-xl font-semibold text-[var(--color-foreground)]">
-                  {t("courses.courseContent", "Course content")} ({course.lessons.length} {t("courses.lessonsCount", "lessons")})
-                </h2>
-                <ul className="mt-4 space-y-2">
-                  {(hasPartialAccess && !isEnrolled && !isStaff
-                    ? course.lessons.filter((l) => allowedLessonIds.includes(String((l as Record<string, unknown>).id ?? l.id)))
-                    : course.lessons
-                  ).map((lesson, i) => {
-                    const lessonClassName = `flex items-center gap-3 rounded-[var(--radius-btn)] border border-[var(--color-border)] bg-[var(--color-background)] p-3 ${canAccessContent ? "transition hover:border-[var(--color-primary)]/30" : ""}`;
-                    const content = (
-                      <>
-                        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[var(--color-primary)]/20 text-sm font-medium text-[var(--color-primary)]">
-                          {i + 1}
-                        </span>
-                        <div className="min-w-0 flex-1">
-                          <span className="font-medium text-[var(--color-foreground)]">
-                            {String((lesson as Record<string, unknown>).titleAr ?? (lesson as Record<string, unknown>).title ?? "")}
-                          </span>
-                          {(lesson as Record<string, unknown>).duration ? (
-                            <span className="mr-2 text-sm text-[var(--color-muted)]">
-                              • {String((lesson as Record<string, unknown>).duration)} {t("courses.minutes", "minutes")}
-                            </span>
-                          ) : null}
-                          {(lesson as Record<string, unknown>).videoUrl && canAccessContent ? (
-                            <span className="mr-2 text-xs text-[var(--color-primary)]">▶ {t("courses.videoTag", "Video")}</span>
-                          ) : null}
-                        </div>
-                      </>
-                    );
-                    const courseSlugOrId = String((course as Record<string, unknown>).slug ?? "").trim() || String((course as Record<string, unknown>).id ?? course.id);
-                    const lessonSlugOrId = (lesson as Record<string, unknown>).slug && String((lesson as Record<string, unknown>).slug).trim()
-                      ? encodeURIComponent(String((lesson as Record<string, unknown>).slug).trim())
-                      : String((lesson as Record<string, unknown>).id ?? lesson.id);
-                    return (
-                      <li key={String(lesson.id)}>
-                        {canAccessContent ? (
-                          <Link
-                            href={`/courses/${courseSlugOrId}/lessons/${lessonSlugOrId}`}
-                            className={lessonClassName}
-                          >
-                            {content}
-                          </Link>
-                        ) : (
-                          <div className={lessonClassName}>
-                            {content}
-                          </div>
-                        )}
-                      </li>
-                    );
-                  })}
-                </ul>
-              </div>
-            )}
-
-            {course.quizzes && course.quizzes.length > 0 && (
-              <div className="mt-10">
-                <h2 className="text-xl font-semibold text-[var(--color-foreground)]">
-                  {t("courses.quizzes", "Quizzes")} ({course.quizzes.length})
-                </h2>
-                <ul className="mt-4 space-y-2">
-                  {course.quizzes.map((quiz, i) => {
-                    const q = quiz as Record<string, unknown> & { _count?: { questions?: number } };
-                    const questionsCount = q._count?.questions ?? 0;
-                    return (
-                    <li key={String(q.id)}>
-                      {canAccessQuizzes ? (
-                        <Link
-                          href={`/courses/${encodeURIComponent(normalizeSlugForUrl(String((course as Record<string, unknown>).slug ?? "")) || String((course as Record<string, unknown>).id ?? course.id))}/quizzes/${String(q.id)}`}
-                          className="flex items-center justify-between rounded-[var(--radius-btn)] border border-[var(--color-border)] bg-[var(--color-background)] p-4 transition hover:border-[var(--color-primary)]/30"
-                        >
-                          <span className="font-medium text-[var(--color-foreground)]">{String(q.title ?? "")}</span>
-                          <span className="text-sm text-[var(--color-muted)]">{questionsCount} {t("courses.questions", "questions")}</span>
-                        </Link>
-                      ) : (
-                        <div className="flex items-center justify-between rounded-[var(--radius-btn)] border border-[var(--color-border)] bg-[var(--color-background)] p-4 opacity-75">
-                          <span className="font-medium text-[var(--color-foreground)]">{String(q.title ?? "")}</span>
-                          <span className="text-sm text-[var(--color-muted)]">{questionsCount} {t("courses.questions", "questions")}</span>
-                        </div>
-                      )}
-                    </li>
-                  );})}
-                </ul>
-              </div>
+            {progression.rows.length > 0 && (
+              <CourseContentProgressList
+                course={{
+                  id: course.id,
+                  slug: String((course as Record<string, unknown>).slug ?? ""),
+                }}
+                rows={progression.rows}
+                canAccess={canAccessContent}
+              />
             )}
           </div>
         </div>

@@ -4,20 +4,43 @@ import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useT } from "@/components/LocaleProvider";
 import { CourseFormSaveOverlay } from "../CourseFormSaveOverlay";
+import {
+  type ContentOrderEntry,
+  type QuizRow,
+  buildParentQuizOptions,
+  parentRefFromKey,
+  parentRefKey,
+} from "../course-quiz-form-types";
+import { QuestionImageField } from "../QuestionImageField";
+
+type CreateContentOrderEntry = { type: "lesson"; index: number } | { type: "quiz"; index: number };
 
 type CategoryOption = { id: string; name: string; nameAr?: string | null };
+type TeacherOption = { id: string; name: string | null; email: string | null };
 type LessonRow = { title: string; videoUrl: string; content: string; pdfUrl: string; acceptsHomework: boolean };
-type QuestionOptionRow = { text: string; isCorrect: boolean };
-type QuestionRow = { type: "MULTIPLE_CHOICE" | "TRUE_FALSE"; questionText: string; options: QuestionOptionRow[] };
-type QuizRow = { title: string; timeLimitMinutes: string; questions: QuestionRow[] };
-type ContentOrderEntry = { type: "lesson"; index: number } | { type: "quiz"; index: number };
 
-export function CreateCourseForm() {
+const defaultQuiz: QuizRow = {
+  title: "",
+  timeLimitMinutes: "",
+  maxAttempts: "",
+  quizType: "NORMAL",
+  parentQuizRef: null,
+  questions: [{ type: "MULTIPLE_CHOICE", questionText: "", imageUrl: "", options: [{ text: "", isCorrect: false }] }],
+};
+
+export function CreateCourseForm({
+  isAdmin = false,
+  teachers = [],
+}: {
+  isAdmin?: boolean;
+  teachers?: TeacherOption[];
+}) {
   const router = useRouter();
   const t = useT();
   const Cf = "dashboard.courseForm";
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [teacherId, setTeacherId] = useState("");
   const [categories, setCategories] = useState<CategoryOption[]>([]);
   const [form, setForm] = useState({
     titleAr: "",
@@ -28,7 +51,6 @@ export function CreateCourseForm() {
     shortDescEn: "",
     imageUrl: "",
     price: "",
-    maxQuizAttempts: "",
     categoryId: "",
     categoryNameAr: "",
     categoryNameEn: "",
@@ -64,8 +86,8 @@ export function CreateCourseForm() {
     }
   }
 
-  const [quizzes, setQuizzes] = useState<QuizRow[]>([{ title: "", timeLimitMinutes: "", questions: [{ type: "MULTIPLE_CHOICE", questionText: "", options: [{ text: "", isCorrect: false }] }] }]);
-  const [contentOrder, setContentOrder] = useState<ContentOrderEntry[]>([{ type: "lesson", index: 0 }, { type: "quiz", index: 0 }]);
+  const [quizzes, setQuizzes] = useState<QuizRow[]>([{ ...defaultQuiz }]);
+  const [contentOrder, setContentOrder] = useState<CreateContentOrderEntry[]>([{ type: "lesson", index: 0 }, { type: "quiz", index: 0 }]);
   const [imageUploading, setImageUploading] = useState(false);
   const [imageUploadError, setImageUploadError] = useState("");
   const [pdfUploading, setPdfUploading] = useState<number | null>(null);
@@ -91,16 +113,38 @@ export function CreateCourseForm() {
   }
 
   function addQuiz() {
-    setQuizzes((q) => [...q, { title: "", timeLimitMinutes: "", questions: [{ type: "MULTIPLE_CHOICE", questionText: "", options: [{ text: "", isCorrect: false }] }] }]);
+    setQuizzes((q) => [...q, { ...defaultQuiz }]);
     setContentOrder((c) => [...c, { type: "quiz", index: c.filter((x) => x.type === "quiz").length }]);
   }
   function removeQuiz(qi: number) {
-    setQuizzes((q) => q.filter((_, i) => i !== qi));
+    setQuizzes((prev) =>
+      prev
+        .filter((_, i) => i !== qi)
+        .map((q) => {
+          if (q.parentQuizRef?.type === "owned" && q.parentQuizRef.index === qi) {
+            return { ...q, parentQuizRef: null };
+          }
+          if (q.parentQuizRef?.type === "owned" && q.parentQuizRef.index > qi) {
+            return { ...q, parentQuizRef: { type: "owned", index: q.parentQuizRef.index - 1 } };
+          }
+          return q;
+        }),
+    );
     setContentOrder((c) =>
       c
         .filter((e) => !(e.type === "quiz" && e.index === qi))
-        .map((e) => (e.type === "quiz" && e.index > qi ? { ...e, index: e.index - 1 } : e))
+        .map((e) => (e.type === "quiz" && e.index > qi ? { ...e, index: e.index - 1 } : e)),
     );
+  }
+  function updateQuizType(qi: number, quizType: "NORMAL" | "REMEDIAL") {
+    setQuizzes((q) =>
+      q.map((x, i) =>
+        i === qi ? { ...x, quizType, parentQuizRef: quizType === "NORMAL" ? null : x.parentQuizRef } : x,
+      ),
+    );
+  }
+  function updateQuizParentRef(qi: number, ref: import("../course-quiz-form-types").ParentQuizRef | null) {
+    setQuizzes((q) => q.map((x, i) => (i === qi ? { ...x, parentQuizRef: ref } : x)));
   }
   function updateQuizTitle(qi: number, title: string) {
     setQuizzes((q) => q.map((x, i) => (i === qi ? { ...x, title } : x)));
@@ -108,15 +152,25 @@ export function CreateCourseForm() {
   function updateQuizTimeLimit(qi: number, value: string) {
     setQuizzes((q) => q.map((x, i) => (i === qi ? { ...x, timeLimitMinutes: value } : x)));
   }
+  function updateQuizMaxAttempts(qi: number, value: string) {
+    setQuizzes((q) => q.map((x, i) => (i === qi ? { ...x, maxAttempts: value } : x)));
+  }
   function addQuestion(qi: number) {
     setQuizzes((q) =>
       q.map((x, i) =>
-        i === qi ? { ...x, questions: [...x.questions, { type: "MULTIPLE_CHOICE" as const, questionText: "", options: [{ text: "", isCorrect: false }] }] } : x
+        i === qi ? { ...x, questions: [...x.questions, { type: "MULTIPLE_CHOICE" as const, questionText: "", imageUrl: "", options: [{ text: "", isCorrect: false }] }] } : x
       )
     );
   }
   function removeQuestion(qi: number, qti: number) {
     setQuizzes((q) => q.map((x, i) => (i === qi ? { ...x, questions: x.questions.filter((_, j) => j !== qti) } : x)));
+  }
+  function updateQuestionImageUrl(qi: number, qti: number, imageUrl: string) {
+    setQuizzes((q) =>
+      q.map((x, i) =>
+        i === qi ? { ...x, questions: x.questions.map((qt, j) => (j === qti ? { ...qt, imageUrl } : qt)) } : x
+      )
+    );
   }
   function updateQuestion(qi: number, qti: number, field: "type" | "questionText", value: string) {
     setQuizzes((q) =>
@@ -199,24 +253,35 @@ export function CreateCourseForm() {
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError("");
+    if (isAdmin && !teacherId.trim()) {
+      setError(t(`${Cf}.assignTeacherRequired`, "Please select a teacher for this course."));
+      return;
+    }
     setLoading(true);
     try {
-    const slug = slugify(form.titleEn || form.titleAr || "course");
+    const slug = slugify(form.titleAr || "course");
     const validLessons = lessons.filter((l) => l.title.trim());
     const validQuizzes = quizzes
       .filter((q) => q.title.trim())
       .filter((q) => q.questions.some((qt) => qt.questionText.trim()) && q.questions.filter((qt) => qt.questionText.trim()).length > 0)
       .map((q) => ({
         title: q.title.trim(),
+        quizType: q.quizType,
+        parentQuizRef: q.quizType === "REMEDIAL" ? q.parentQuizRef : null,
         timeLimitMinutes: (() => {
           const n = parseInt(q.timeLimitMinutes, 10);
           return Number.isFinite(n) && n >= 1 ? n : undefined;
+        })(),
+        maxAttempts: (() => {
+          const n = parseInt(q.maxAttempts, 10);
+          return Number.isFinite(n) && n >= 1 ? n : null;
         })(),
         questions: q.questions
           .filter((qt) => qt.questionText.trim())
           .map((qt) => ({
             type: qt.type,
             questionText: qt.questionText.trim(),
+            imageUrl: qt.imageUrl?.trim() || undefined,
             options:
               qt.type === "MULTIPLE_CHOICE"
                 ? qt.options.filter((o) => o.text.trim()).map((o) => ({ text: o.text.trim(), isCorrect: o.isCorrect }))
@@ -242,17 +307,14 @@ export function CreateCourseForm() {
 
     const payload = {
       titleAr: form.titleAr.trim(),
-      titleEn: form.titleEn.trim(),
       slug,
       descriptionAr: form.descriptionAr.trim(),
-      descriptionEn: form.descriptionEn.trim(),
       shortDescAr: form.shortDescAr.trim() || undefined,
-      shortDescEn: form.shortDescEn.trim() || undefined,
       imageUrl: form.imageUrl.trim() || undefined,
       price: form.price ? parseFloat(form.price) : 0,
-      maxQuizAttempts: form.maxQuizAttempts.trim() ? parseInt(form.maxQuizAttempts, 10) : null,
-      ...(form.categoryNameAr.trim() || form.categoryNameEn.trim()
-        ? { categoryNameAr: form.categoryNameAr.trim(), categoryNameEn: form.categoryNameEn.trim() }
+      ...(isAdmin && teacherId.trim() ? { teacherId: teacherId.trim() } : {}),
+      ...(form.categoryNameAr.trim()
+        ? { categoryNameAr: form.categoryNameAr.trim() }
         : form.categoryId ? { categoryId: form.categoryId } : {}),
       lessons: validLessons.map((l) => ({
           title: l.title.trim(),
@@ -297,6 +359,27 @@ export function CreateCourseForm() {
       <section className="rounded-[var(--radius-card)] border border-[var(--color-border)] bg-[var(--color-surface)] p-6">
         <h3 className="mb-4 text-lg font-semibold text-[var(--color-foreground)]">{t(`${Cf}.sectionCourseBasics`)}</h3>
         <div className="space-y-4">
+          {isAdmin && (
+            <div>
+              <label className="block text-sm font-medium text-[var(--color-foreground)]">
+                {t(`${Cf}.assignTeacherLabel`, "Assigned teacher")}
+              </label>
+              <select
+                value={teacherId}
+                onChange={(e) => setTeacherId(e.target.value)}
+                required
+                className="mt-1 w-full rounded-[var(--radius-btn)] border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2"
+              >
+                <option value="">{t(`${Cf}.assignTeacherPlaceholder`, "Select a teacher")}</option>
+                {teachers.map((teacher) => (
+                  <option key={teacher.id} value={teacher.id}>
+                    {teacher.name ?? teacher.email ?? teacher.id}
+                    {teacher.name && teacher.email ? ` (${teacher.email})` : ""}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
           <div>
             <label className="block text-sm font-medium text-[var(--color-foreground)]">{t(`${Cf}.courseImageLabel`)}</label>
             <p className="mt-1 text-xs text-[var(--color-muted)]">{t(`${Cf}.courseImageHelp`)}</p>
@@ -367,8 +450,8 @@ export function CreateCourseForm() {
             <label className="block text-sm font-medium text-[var(--color-foreground)]">{t(`${Cf}.categoryOptional`)}</label>
             <p className="mt-1 text-xs text-[var(--color-muted)]">{t(`${Cf}.categoryHelpChooseOrNew`)}</p>
             <select
-              value={form.categoryNameAr.trim() || form.categoryNameEn.trim() ? "" : form.categoryId}
-              onChange={(e) => setForm((f) => ({ ...f, categoryId: e.target.value, categoryNameAr: "", categoryNameEn: "" }))}
+              value={form.categoryNameAr.trim() ? "" : form.categoryId}
+              onChange={(e) => setForm((f) => ({ ...f, categoryId: e.target.value, categoryNameAr: "" }))}
               className="mt-1 w-full rounded-[var(--radius-btn)] border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2"
             >
               <option value="">{t(`${Cf}.noCategoryOption`)}</option>
@@ -379,19 +462,12 @@ export function CreateCourseForm() {
               ))}
             </select>
             <div className="mt-2">
-              <label className="block text-xs text-[var(--color-muted)]">{t(`${Cf}.newCategoryBilingualHint`)}</label>
+              <label className="block text-xs text-[var(--color-muted)]">{t(`${Cf}.newCategoryArabicPlaceholder`)}</label>
               <input
                 type="text"
                 value={form.categoryNameAr}
                 onChange={(e) => setForm((f) => ({ ...f, categoryNameAr: e.target.value, categoryId: "" }))}
                 placeholder={t(`${Cf}.newCategoryArabicPlaceholder`)}
-                className="mt-1 w-full rounded-[var(--radius-btn)] border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2 text-sm"
-              />
-              <input
-                type="text"
-                value={form.categoryNameEn}
-                onChange={(e) => setForm((f) => ({ ...f, categoryNameEn: e.target.value, categoryId: "" }))}
-                placeholder={t(`${Cf}.newCategoryEnglishLabel`)}
                 className="mt-1 w-full rounded-[var(--radius-btn)] border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2 text-sm"
               />
             </div>
@@ -439,16 +515,6 @@ export function CreateCourseForm() {
             />
           </div>
           <div>
-            <label className="block text-sm font-medium text-[var(--color-foreground)]">{t(`${Cf}.titleEnRequired`)}</label>
-            <input
-              type="text"
-              value={form.titleEn}
-              onChange={(e) => setForm((f) => ({ ...f, titleEn: e.target.value }))}
-              className="mt-1 w-full rounded-[var(--radius-btn)] border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2"
-              required
-            />
-          </div>
-          <div>
             <label className="block text-sm font-medium text-[var(--color-foreground)]">{t(`${Cf}.shortDescAr`)}</label>
             <input
               type="text"
@@ -459,30 +525,10 @@ export function CreateCourseForm() {
             />
           </div>
           <div>
-            <label className="block text-sm font-medium text-[var(--color-foreground)]">{t(`${Cf}.shortDescEn`)}</label>
-            <input
-              type="text"
-              maxLength={300}
-              value={form.shortDescEn}
-              onChange={(e) => setForm((f) => ({ ...f, shortDescEn: e.target.value }))}
-              className="mt-1 w-full rounded-[var(--radius-btn)] border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2"
-            />
-          </div>
-          <div>
             <label className="block text-sm font-medium text-[var(--color-foreground)]">{t(`${Cf}.fullDescArRequired`)}</label>
             <textarea
               value={form.descriptionAr}
               onChange={(e) => setForm((f) => ({ ...f, descriptionAr: e.target.value }))}
-              rows={4}
-              className="mt-1 w-full rounded-[var(--radius-btn)] border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2"
-              required
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-[var(--color-foreground)]">{t(`${Cf}.fullDescEnRequired`)}</label>
-            <textarea
-              value={form.descriptionEn}
-              onChange={(e) => setForm((f) => ({ ...f, descriptionEn: e.target.value }))}
               rows={4}
               className="mt-1 w-full rounded-[var(--radius-btn)] border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2"
               required
@@ -588,18 +634,6 @@ export function CreateCourseForm() {
       <section className="rounded-[var(--radius-card)] border border-[var(--color-border)] bg-[var(--color-surface)] p-6">
         <h3 className="mb-4 text-lg font-semibold text-[var(--color-foreground)]">{t(`${Cf}.quizzesHeading`)}</h3>
         <p className="mb-4 text-sm text-[var(--color-muted)]">{t(`${Cf}.quizzesIntro`)}</p>
-        <div className="mb-6">
-          <label className="block text-sm font-medium text-[var(--color-foreground)]">{t(`${Cf}.quizAttemptsHint`)}</label>
-          <input
-            type="number"
-            min="1"
-            placeholder={t(`${Cf}.unlimitedPlaceholderLine`)}
-            value={form.maxQuizAttempts}
-            onChange={(e) => setForm((f) => ({ ...f, maxQuizAttempts: e.target.value }))}
-            className="mt-1 w-full max-w-xs rounded-[var(--radius-btn)] border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2"
-          />
-          <p className="mt-1 text-xs text-[var(--color-muted)]">{t(`${Cf}.quizAttemptsExplanation`)}</p>
-        </div>
         {quizzes.map((quiz, qi) => (
           <div key={qi} className="mb-6 rounded-[var(--radius-btn)] border border-[var(--color-border)] bg-[var(--color-background)] p-4">
             <div className="mb-3 flex items-center justify-between">
@@ -614,17 +648,61 @@ export function CreateCourseForm() {
                 {t(`${Cf}.deleteQuiz`)}
               </button>
             </div>
-            <div className="mb-3">
-              <label className="block text-sm font-medium text-[var(--color-foreground)]">{t(`${Cf}.quizDurationMinutes`)}</label>
-              <input
-                type="number"
-                min="1"
-                placeholder={t(`${Cf}.openTimePlaceholderLine`)}
-                value={quiz.timeLimitMinutes}
-                onChange={(e) => updateQuizTimeLimit(qi, e.target.value)}
-                className="mt-1 w-full max-w-xs rounded-[var(--radius-btn)] border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2"
-              />
-              <p className="mt-1 text-xs text-[var(--color-muted)]">{t(`${Cf}.quizTimeHelp`)}</p>
+            <div className="mb-3 grid gap-3 sm:grid-cols-2">
+              <div>
+                <label className="block text-sm font-medium text-[var(--color-foreground)]">{t(`${Cf}.quizTypeLabel`, "Quiz type")}</label>
+                <select
+                  value={quiz.quizType}
+                  onChange={(e) => updateQuizType(qi, e.target.value as "NORMAL" | "REMEDIAL")}
+                  className="mt-1 w-full rounded-[var(--radius-btn)] border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2 text-sm"
+                >
+                  <option value="NORMAL">{t(`${Cf}.quizTypeNormal`, "Normal")}</option>
+                  <option value="REMEDIAL">{t(`${Cf}.quizTypeRemedial`, "Remedial (after failing parent quiz)")}</option>
+                </select>
+              </div>
+              {quiz.quizType === "REMEDIAL" && (
+                <div>
+                  <label className="block text-sm font-medium text-[var(--color-foreground)]">{t(`${Cf}.parentQuizLabel`, "Parent quiz")}</label>
+                  <select
+                    value={parentRefKey(quiz.parentQuizRef)}
+                    onChange={(e) => updateQuizParentRef(qi, parentRefFromKey(e.target.value, []))}
+                    className="mt-1 w-full rounded-[var(--radius-btn)] border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2 text-sm"
+                  >
+                    <option value="">{t(`${Cf}.selectParentQuiz`, "Select parent quiz")}</option>
+                    {buildParentQuizOptions(contentOrder, quizzes, [], qi).map((opt) => (
+                      <option key={parentRefKey(opt.ref)} value={parentRefKey(opt.ref)}>
+                        {opt.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+            </div>
+            <div className="mb-3 grid gap-3 sm:grid-cols-2">
+              <div>
+                <label className="block text-sm font-medium text-[var(--color-foreground)]">{t(`${Cf}.quizDurationMinutes`)}</label>
+                <input
+                  type="number"
+                  min="1"
+                  placeholder={t(`${Cf}.openTimePlaceholderLine`)}
+                  value={quiz.timeLimitMinutes}
+                  onChange={(e) => updateQuizTimeLimit(qi, e.target.value)}
+                  className="mt-1 w-full rounded-[var(--radius-btn)] border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2"
+                />
+                <p className="mt-1 text-xs text-[var(--color-muted)]">{t(`${Cf}.quizTimeHelp`)}</p>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-[var(--color-foreground)]">{t(`${Cf}.quizAttemptsHint`)}</label>
+                <input
+                  type="number"
+                  min="1"
+                  placeholder={t(`${Cf}.unlimitedPlaceholderLine`)}
+                  value={quiz.maxAttempts}
+                  onChange={(e) => updateQuizMaxAttempts(qi, e.target.value)}
+                  className="mt-1 w-full rounded-[var(--radius-btn)] border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2"
+                />
+                <p className="mt-1 text-xs text-[var(--color-muted)]">{t(`${Cf}.quizAttemptsPerQuizExplanation`)}</p>
+              </div>
             </div>
             {quiz.questions.map((q, qti) => (
               <div key={qti} className="mb-4 rounded border border-[var(--color-border)] bg-[var(--color-surface)] p-3">
@@ -651,6 +729,7 @@ export function CreateCourseForm() {
                   rows={2}
                   className="mb-2 w-full rounded border border-[var(--color-border)] bg-[var(--color-background)] px-2 py-1 text-sm"
                 />
+                <QuestionImageField value={q.imageUrl} onChange={(url) => updateQuestionImageUrl(qi, qti, url)} />
                 {(q.type === "MULTIPLE_CHOICE" || q.type === "TRUE_FALSE") && (
                   <div className="space-y-1">
                     <p className="text-xs text-[var(--color-muted)]">
@@ -728,7 +807,7 @@ export function CreateCourseForm() {
                 : `${t(`${Cf}.orderQuizPrefix`)}${entry.index + 1}${quizzes[entry.index]?.title?.trim() ? ": " + quizzes[entry.index].title.trim() : ""}`;
             return (
               <li
-                key={`${entry.type}-${entry.index}-${pos}`}
+                key={`${entry.type}-${entry.type === "lesson" || entry.type === "quiz" ? entry.index : pos}-${pos}`}
                 className="flex items-center justify-between gap-2 rounded-[var(--radius-btn)] border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2"
               >
                 <span className="text-sm text-[var(--color-foreground)]">

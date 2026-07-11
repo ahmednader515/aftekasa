@@ -1,6 +1,8 @@
+import { getServerSession } from "next-auth";
 import { redirect } from "next/navigation";
 import Link from "next/link";
-import { getSession } from "@/lib/auth-server";
+import { authOptions } from "@/lib/auth";
+import { resolveCourseIsPublished } from "@/lib/legacy-schema";
 import {
   getUserById,
   getAccessibleCoursesForUser,
@@ -10,9 +12,8 @@ import {
   getCoursesWithCountsForCreator,
   getSubscriptionsFeatureEnabled,
   listActiveSubscriptionPlansPublic,
+  listActivePlatformSubscriptionsForUser,
   listStudentStorePurchases,
-  userHasActivePlatformSubscription,
-  getLatestPlatformSubscriptionExpiry,
 } from "@/lib/db";
 import { getServerTranslator } from "@/lib/i18n/server";
 import { MyCoursesSection } from "./MyCoursesSection";
@@ -20,7 +21,7 @@ import { ActivateCodeSection } from "./ActivateCodeSection";
 import { StudentSubscriptionsPanel } from "./StudentSubscriptionsPanel";
 
 export default async function DashboardPage() {
-  const session = await getSession();
+  const session = await getServerSession(authOptions);
   if (!session) redirect("/login");
   const t = await getServerTranslator();
 
@@ -33,7 +34,7 @@ export default async function DashboardPage() {
     const myCourses = await getCoursesWithCountsForCreator(session.user.id).catch(() => []);
     const publishedCount = myCourses.filter((c) => {
       const row = c as Record<string, unknown>;
-      return Boolean(row.isPublished ?? row.is_published ?? false);
+      return resolveCourseIsPublished(row);
     }).length;
 
     return (
@@ -151,16 +152,13 @@ export default async function DashboardPage() {
 
     let subscriptionsFeature = false;
     let subscriptionPlansForStudent: Awaited<ReturnType<typeof listActiveSubscriptionPlansPublic>> = [];
-    let studentHasActiveSub = false;
-    let studentSubExpiresIso: string | null = null;
+    let studentActiveSubscriptions: Awaited<ReturnType<typeof listActivePlatformSubscriptionsForUser>> = [];
     let storePurchases: Awaited<ReturnType<typeof listStudentStorePurchases>> = [];
     try {
       subscriptionsFeature = await getSubscriptionsFeatureEnabled();
       if (subscriptionsFeature) {
         subscriptionPlansForStudent = await listActiveSubscriptionPlansPublic();
-        studentHasActiveSub = await userHasActivePlatformSubscription(session.user.id);
-        const exp = studentHasActiveSub ? await getLatestPlatformSubscriptionExpiry(session.user.id) : null;
-        studentSubExpiresIso = exp ? exp.toISOString() : null;
+        studentActiveSubscriptions = await listActivePlatformSubscriptionsForUser(session.user.id);
       }
       storePurchases = await listStudentStorePurchases(session.user.id).catch(() => []);
     } catch {
@@ -234,8 +232,10 @@ export default async function DashboardPage() {
         {subscriptionsFeature ? (
           <StudentSubscriptionsPanel
             plans={subscriptionPlansForStudent}
-            hasActivePlatformSubscription={studentHasActiveSub}
-            activePlatformSubscriptionExpiresAtIso={studentSubExpiresIso}
+            activeSubscriptions={studentActiveSubscriptions.map((sub) => ({
+              categoryId: sub.categoryId,
+              expiresAtIso: sub.expiresAt.toISOString(),
+            }))}
           />
         ) : null}
 

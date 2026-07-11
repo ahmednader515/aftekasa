@@ -1,14 +1,14 @@
+import { getServerSession } from "next-auth";
 import { redirect } from "next/navigation";
-import { getSession } from "@/lib/auth-server";
+import { authOptions } from "@/lib/auth";
 import { DashboardNav } from "./DashboardNav";
-import { AdminIntroLoader } from "./AdminIntroLoader";
 import { getServerTranslator } from "@/lib/i18n/server";
 
 export default async function DashboardLayout({
   children,
 }: { children: React.ReactNode }) {
   const t = await getServerTranslator();
-  const session = await getSession();
+  const session = await getServerSession(authOptions);
   if (!session) redirect("/login");
 
   const isAdmin = session.user.role === "ADMIN";
@@ -18,11 +18,17 @@ export default async function DashboardLayout({
   return (
     <>
       {isAdmin ? (
-        <AdminIntroLoader
-          hello={t("dashboard.introHello", "Welcome")}
-          back={t("dashboard.introBack", "back")}
-          again={t("dashboard.introAgain", "again")}
-        />
+        <div className="admin-intro-loader" aria-hidden>
+          <div className="admin-intro-stripe" />
+          <div className="admin-intro-stripe" />
+          <div className="admin-intro-stripe" />
+          <div className="admin-intro-stripe" />
+          <div className="admin-intro-claim">
+            <span>{t("dashboard.introHello", "Welcome")}</span>
+            <span>{t("dashboard.introBack", "back")}</span>
+            <span>{t("dashboard.introAgain", "again")}</span>
+          </div>
+        </div>
       ) : null}
       <div
         className={`mx-auto max-w-6xl px-4 py-8 sm:px-6 ${

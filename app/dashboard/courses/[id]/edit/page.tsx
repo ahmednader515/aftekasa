@@ -1,8 +1,9 @@
-import { getSession } from "@/lib/auth-server";
+import { getServerSession } from "next-auth";
 import { redirect, notFound } from "next/navigation";
 import Link from "next/link";
-import { getCourseForEdit } from "@/lib/db";
-import { canManageCourse } from "@/lib/permissions";
+import { authOptions } from "@/lib/auth";
+import { getCourseForEdit, getUsersByRole } from "@/lib/db";
+import { canManageCourse, readCourseManageIds } from "@/lib/permissions";
 import { EditCourseForm, type ContentOrderEntry } from "./EditCourseForm";
 
 type Props = { params: Promise<{ id: string }> };
@@ -10,7 +11,8 @@ type Props = { params: Promise<{ id: string }> };
 /** ترتيب الحصص والاختبارات كما يُعرض للطالب (حسب حقل order في الجدول) */
 function initialContentOrderFromRows(
   lessonRows: Record<string, unknown>[],
-  quizRows: Record<string, unknown>[]
+  quizRows: Record<string, unknown>[],
+  linkedRows: Record<string, unknown>[] = [],
 ): ContentOrderEntry[] {
   type Sortable = ContentOrderEntry & { sortKey: number };
   const entries: Sortable[] = [];
@@ -26,16 +28,27 @@ function initialContentOrderFromRows(
     const sortKey = typeof o === "number" && Number.isFinite(o) ? o : lessonRows.length + i;
     entries.push({ type: "quiz", index: i, sortKey });
   }
+  for (const row of linkedRows) {
+    const o = row.order;
+    const sortKey = typeof o === "number" && Number.isFinite(o) ? o : 999;
+    entries.push({ type: "linkedQuiz", quizId: String(row.quizId ?? row.id), sortKey });
+  }
   entries.sort((a, b) => {
     if (a.sortKey !== b.sortKey) return a.sortKey - b.sortKey;
     if (a.type !== b.type) return a.type === "lesson" ? -1 : 1;
-    return a.index - b.index;
+    if (a.type === "linkedQuiz" && b.type === "linkedQuiz") return a.quizId.localeCompare(b.quizId);
+    if ("index" in a && "index" in b) return a.index - b.index;
+    return 0;
   });
-  return entries.map(({ type, index }) => ({ type, index }));
+  return entries.map(({ type, ...rest }) => {
+    if (type === "linkedQuiz" && "quizId" in rest) return { type, quizId: rest.quizId as string };
+    if (type === "lesson" && "index" in rest) return { type, index: rest.index as number };
+    return { type: "quiz", index: (rest as { index: number }).index };
+  });
 }
 
 export default async function EditCoursePage({ params }: Props) {
-  const session = await getSession();
+  const session = await getServerSession(authOptions);
   if (!session) redirect("/login");
   const role = session.user.role;
   if (role !== "ADMIN" && role !== "TEACHER") {
@@ -48,13 +61,21 @@ export default async function EditCoursePage({ params }: Props) {
   if (!data?.course) notFound();
 
   const c = data.course as Record<string, unknown>;
-  const createdBy =
-    (c.createdById as string | null | undefined) ??
-    (c.created_by_id as string | null | undefined) ??
-    null;
-  if (!canManageCourse(role, session.user.id, createdBy)) {
+  const { createdById: createdBy, assignedTeacherId } = readCourseManageIds(c);
+  if (!canManageCourse(role, session.user.id, createdBy, assignedTeacherId)) {
     redirect("/dashboard");
   }
+  const isAdmin = role === "ADMIN";
+  const teachers = isAdmin
+    ? (await getUsersByRole("TEACHER")).map((u) => ({
+        id: u.id,
+        name: u.name ?? null,
+        email: u.email ?? null,
+      }))
+    : [];
+  const legacyAssignedTeacher =
+    assignedTeacherId ??
+    (teachers.some((t) => t.id === createdBy) ? createdBy : "");
   const initialData = {
     id: String(c.id ?? ""),
     titleEn: String(c.title ?? ""),
@@ -68,9 +89,11 @@ export default async function EditCoursePage({ params }: Props) {
     isPublished: Boolean(c.isPublished ?? c.is_published ?? true),
     maxQuizAttempts: typeof c.maxQuizAttempts === "number" ? c.maxQuizAttempts : typeof c.max_quiz_attempts === "number" ? c.max_quiz_attempts : null,
     categoryId: (c.categoryId ?? c.category_id ?? "") as string,
+    teacherId: legacyAssignedTeacher ?? "",
     lessons: data.lessons.map((l) => {
       const row = l as Record<string, unknown>;
       return {
+        id: String(row.id ?? ""),
         title: String(row.title ?? ""),
         videoUrl: String(row.videoUrl ?? row.video_url ?? ""),
         content: String(row.content ?? ""),
@@ -89,11 +112,21 @@ export default async function EditCoursePage({ params }: Props) {
             : null;
       const questions = (row.questions ?? []) as Array<Record<string, unknown>>;
       return {
+        id: String(row.id ?? ""),
         title: String(row.title ?? ""),
+        quizType: (row.quizType === "REMEDIAL" ? "REMEDIAL" : "NORMAL") as "NORMAL" | "REMEDIAL",
+        parentQuizId: (row.parentQuizId ?? row.parent_quiz_id ?? null) as string | null,
         timeLimitMinutes: timeLimitMinutes != null && Number.isFinite(timeLimitMinutes) && timeLimitMinutes >= 1 ? timeLimitMinutes : null,
+        maxAttempts: (() => {
+          const raw = row.maxAttempts ?? row.max_attempts;
+          if (raw == null) return null;
+          const n = Number(raw);
+          return Number.isFinite(n) && n >= 1 ? n : null;
+        })(),
         questions: questions.map((qt) => ({
           type: (qt.type === "ESSAY" || qt.type === "TRUE_FALSE" ? qt.type : "MULTIPLE_CHOICE") as "MULTIPLE_CHOICE" | "ESSAY" | "TRUE_FALSE",
           questionText: String(qt.questionText ?? qt.question_text ?? ""),
+          imageUrl: String(qt.imageUrl ?? qt.image_url ?? ""),
           options: ((qt.options ?? []) as Array<Record<string, unknown>>).map((o) => ({
             text: String(o.text ?? ""),
             isCorrect: Boolean(o.isCorrect ?? o.is_correct),
@@ -101,9 +134,24 @@ export default async function EditCoursePage({ params }: Props) {
         })),
       };
     }),
+    linkedQuizzes: (data.linkedQuizzes ?? []).map((q) => {
+      const row = q as Record<string, unknown>;
+      return {
+        id: String(row.id ?? ""),
+        title: String(row.title ?? ""),
+        quizType: String(row.quizType ?? "NORMAL"),
+        ownerCourseTitle: String(row.ownerCourseTitle ?? ""),
+        ownerCourseTitleAr: row.ownerCourseTitleAr != null ? String(row.ownerCourseTitleAr) : null,
+        order: Number(row.order ?? 0),
+      };
+    }),
     contentOrder: initialContentOrderFromRows(
       data.lessons as Record<string, unknown>[],
-      data.quizzes as Record<string, unknown>[]
+      data.quizzes as Record<string, unknown>[],
+      (data.linkedQuizzes ?? []).map((q) => {
+        const row = q as Record<string, unknown>;
+        return { id: row.id, quizId: row.id, order: row.order };
+      }),
     ),
   };
 
@@ -118,7 +166,7 @@ export default async function EditCoursePage({ params }: Props) {
       <h2 className="mt-4 text-xl font-bold text-[var(--color-foreground)]">
         تعديل الدورة
       </h2>
-      <EditCourseForm courseId={id} initialData={initialData} />
+      <EditCourseForm courseId={id} initialData={initialData} isAdmin={isAdmin} teachers={teachers} />
     </div>
   );
 }

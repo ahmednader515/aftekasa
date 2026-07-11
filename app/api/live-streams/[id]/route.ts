@@ -1,9 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
-import { canManageCourse } from "@/lib/permissions";
+import { canManageCourse, readCourseManageIds } from "@/lib/permissions";
 import { getCourseById, getLiveStreamById, updateLiveStream, deleteLiveStream } from "@/lib/db";
-import { parseScheduledAtIso } from "@/lib/datetime-local";
 
 async function assertStaffCanAccessStream(
   role: string,
@@ -15,8 +14,10 @@ async function assertStaffCanAccessStream(
   if (!cid) return false;
   const course = await getCourseById(cid);
   if (!course) return false;
-  const createdBy = (course as { createdById?: string | null; created_by_id?: string | null }).createdById ?? (course as { created_by_id?: string | null }).created_by_id ?? null;
-  return canManageCourse(role, userId, createdBy);
+  const { createdById: createdBy, assignedTeacherId } = readCourseManageIds(
+    course as { createdById?: string | null; created_by_id?: string | null; assignedTeacherId?: string | null; assigned_teacher_id?: string | null },
+  );
+  return canManageCourse(role, userId, createdBy, assignedTeacherId);
 }
 
 /** جلب بث واحد */
@@ -78,13 +79,7 @@ export async function PUT(
     if (body.meetingUrl !== undefined) await updateLiveStream(id, { meeting_url: body.meetingUrl });
     if (body.meetingId !== undefined) await updateLiveStream(id, { meeting_id: body.meetingId });
     if (body.meetingPassword !== undefined) await updateLiveStream(id, { meeting_password: body.meetingPassword });
-    if (body.scheduledAt !== undefined) {
-      const scheduledAtDate = parseScheduledAtIso(body.scheduledAt);
-      if (!scheduledAtDate) {
-        return NextResponse.json({ error: "موعد البث غير صالح" }, { status: 400 });
-      }
-      await updateLiveStream(id, { scheduled_at: scheduledAtDate });
-    }
+    if (body.scheduledAt !== undefined) await updateLiveStream(id, { scheduled_at: new Date(body.scheduledAt) });
     if (body.description !== undefined) await updateLiveStream(id, { description: body.description });
     if (body.order !== undefined) await updateLiveStream(id, { order: body.order });
     const updated = await getLiveStreamById(id);

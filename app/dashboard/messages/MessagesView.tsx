@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
-import { useLocale, useT } from "@/components/LocaleProvider";
+import { useT } from "@/components/LocaleProvider";
 import { dateLocaleForUi } from "@/lib/i18n/dashboard-table";
 
 type ConversationItem = {
@@ -39,9 +39,8 @@ export function MessagesView({
   userName: string;
 }) {
   const t = useT();
-  const locale = useLocale();
   const V = "dashboard.messagesView";
-  const dateLocale = dateLocaleForUi(locale);
+  const dateLocale = dateLocaleForUi();
 
   function roleLabel(role: string) {
     return t(`header.role.${role}`, role);
@@ -110,11 +109,6 @@ export function MessagesView({
 
   async function openChatWithStudent(studentId: string) {
     setSelectedStudentId(studentId);
-    const existing = conversations.find((c) => (c as { studentUserId?: string }).studentUserId === studentId);
-    if (existing) {
-      setSelectedConversationId(existing.id);
-      return;
-    }
     setSending(true);
     try {
       const res = await fetch("/api/messages/conversations", {
@@ -126,10 +120,13 @@ export function MessagesView({
       if (conv.id) {
         setSelectedConversationId(conv.id);
         setConversations((prev) => {
-          const has = prev.some((c) => c.id === conv.id);
-          if (has) return prev;
-          const name = students.find((s) => s.id === studentId)?.name ?? t(`${V}.studentFallback`);
-          return [{ id: conv.id, studentName: name, ...conv }, ...prev];
+          const name =
+            students.find((s) => s.id === studentId)?.name ??
+            t(`${V}.studentFallback`);
+          const withoutDupes = prev.filter(
+            (c) => c.id !== conv.id && c.studentUserId !== studentId
+          );
+          return [{ id: conv.id, studentName: name, studentUserId: studentId, ...conv }, ...withoutDupes];
         });
       }
     } finally {
@@ -322,13 +319,15 @@ export function MessagesView({
             <div ref={messagesScrollRef} className="flex-1 overflow-y-auto p-4">
               {messagesLoading ? (
                 <p className="text-sm text-[var(--color-muted)]">{t(`${V}.loadingMessages`)}</p>
+              ) : messages.length === 0 ? (
+                <p className="text-sm text-[var(--color-muted)]">{t(`${V}.noMessagesYet`, "No messages yet.")}</p>
               ) : (
                 <div className="space-y-3">
                   {messages.map((m) => {
                     const isMe = m.senderId === userId;
                     return (
                       <div key={m.id} className={`flex ${isMe ? "justify-start" : "justify-end"}`}>
-                        <div className={`relative max-w-[85%] rounded-[var(--radius-btn)] px-3 py-2 ${isMe ? "bg-[var(--color-primary)]/15 text-[var(--color-foreground)]" : "bg-[var(--color-background)]"}`}>
+                        <div className={`relative max-w-[85%] rounded-[var(--radius-btn)] px-3 py-2 ${isMe ? "bg-[var(--color-primary)]/15 text-[var(--color-foreground)]" : "bg-[var(--color-background)] text-[var(--color-foreground)]"}`}>
                           {m.messageType === "text" && <p className="whitespace-pre-wrap text-sm">{m.content}</p>}
                           {(m.messageType === "image" || m.messageType === "file") && m.fileUrl && (
                             <div>

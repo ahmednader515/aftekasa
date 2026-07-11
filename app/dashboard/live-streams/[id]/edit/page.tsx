@@ -1,20 +1,25 @@
-import { getSession } from "@/lib/auth-server";
+import { getServerSession } from "next-auth";
 import { redirect, notFound } from "next/navigation";
 import Link from "next/link";
+import { authOptions } from "@/lib/auth";
 import { getLiveStreamById, getCoursesAll, getCoursesWithCountsForCreator, getCourseById } from "@/lib/db";
-import { canManageCourse } from "@/lib/permissions";
+import { canManageCourse, readCourseManageIds } from "@/lib/permissions";
 import { LiveStreamForm } from "../../LiveStreamForm";
 
 type Props = { params: Promise<{ id: string }> };
 
-function toIsoString(value: unknown): string {
-  if (!value) return "";
-  const d = value instanceof Date ? value : new Date(String(value));
-  return Number.isNaN(d.getTime()) ? "" : d.toISOString();
+function toDateTimeLocal(d: Date | string): string {
+  const date = typeof d === "string" ? new Date(d) : d;
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  const h = String(date.getHours()).padStart(2, "0");
+  const min = String(date.getMinutes()).padStart(2, "0");
+  return `${y}-${m}-${day}T${h}:${min}`;
 }
 
 export default async function EditLiveStreamPage({ params }: Props) {
-  const session = await getSession();
+  const session = await getServerSession(authOptions);
   if (!session) redirect("/login");
   const role = session.user.role;
   if (role !== "ADMIN" && role !== "ASSISTANT_ADMIN" && role !== "TEACHER") {
@@ -28,11 +33,12 @@ export default async function EditLiveStreamPage({ params }: Props) {
   const s = stream as unknown as Record<string, unknown>;
   const streamCourseId = String(s.courseId ?? s.course_id ?? "");
   const courseForPerm = await getCourseById(streamCourseId);
-  const createdBy =
-    (courseForPerm as { createdById?: string | null; created_by_id?: string | null } | null)?.createdById ??
-    (courseForPerm as { created_by_id?: string | null } | null)?.created_by_id ??
-    null;
-  if (!canManageCourse(role, session.user.id, createdBy)) {
+  const { createdById: createdBy, assignedTeacherId } = courseForPerm
+    ? readCourseManageIds(
+        courseForPerm as { createdById?: string | null; created_by_id?: string | null; assignedTeacherId?: string | null; assigned_teacher_id?: string | null },
+      )
+    : { createdById: null, assignedTeacherId: null };
+  if (!canManageCourse(role, session.user.id, createdBy, assignedTeacherId)) {
     redirect("/dashboard");
   }
 
@@ -59,7 +65,7 @@ export default async function EditLiveStreamPage({ params }: Props) {
     meetingUrl: String(s.meeting_url ?? ""),
     meetingId: String(s.meeting_id ?? s.meetingId ?? ""),
     meetingPassword: String(s.meeting_password ?? s.meetingPassword ?? ""),
-    scheduledAt: toIsoString(s.scheduled_at ?? s.scheduledAt),
+    scheduledAt: toDateTimeLocal((s.scheduled_at ?? s.scheduledAt) as Date | string),
     description: String(s.description ?? ""),
     order: Number(s.order ?? 0),
   };

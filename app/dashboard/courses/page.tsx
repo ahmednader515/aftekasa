@@ -1,12 +1,14 @@
-import { getSession } from "@/lib/auth-server";
+import { getServerSession } from "next-auth";
 import { redirect } from "next/navigation";
 import Link from "next/link";
+import { authOptions } from "@/lib/auth";
 import { getCoursesWithCounts, getCoursesWithCountsForCreator } from "@/lib/db";
+import { resolveCourseIsPublished } from "@/lib/legacy-schema";
 import { getServerTranslator } from "@/lib/i18n/server";
 import { CoursesManageList } from "./CoursesManageList";
 
 export default async function DashboardCoursesPage() {
-  const session = await getSession();
+  const session = await getServerSession(authOptions);
   if (!session) redirect("/login");
   const role = session.user.role;
   if (role !== "ADMIN" && role !== "ASSISTANT_ADMIN" && role !== "TEACHER") {
@@ -24,12 +26,13 @@ export default async function DashboardCoursesPage() {
     const cat = row.category as { id: string; name: string; nameAr?: string | null; slug: string } | null | undefined;
     const rawImg = row.imageUrl ?? row.image_url;
     const imageUrl: string | null = rawImg !== null && rawImg !== undefined && typeof rawImg === "string" ? rawImg : null;
+    const teacher = row.teacher as { id: string; name: string | null; email: string | null } | null | undefined;
     return {
       id: String(row.id ?? ""),
       title: String(row.title ?? ""),
       titleAr: String(row.titleAr ?? row.title_ar ?? ""),
       slug: String(row.slug ?? ""),
-      isPublished: Boolean(row.isPublished ?? row.is_published ?? false),
+      isPublished: resolveCourseIsPublished(row),
       price: Number(row.price ?? 0),
       imageUrl,
       lessonsCount: Number(row.lessonsCount ?? 0),
@@ -37,8 +40,13 @@ export default async function DashboardCoursesPage() {
       category: cat
         ? { id: cat.id, name: cat.name, nameAr: cat.nameAr ?? null }
         : null,
+      teacher: teacher
+        ? { id: teacher.id, name: teacher.name ?? null, email: teacher.email ?? null }
+        : null,
     };
   });
+
+  const showTeacherColumn = role === "ADMIN" || role === "ASSISTANT_ADMIN";
 
   return (
     <div>
@@ -53,7 +61,7 @@ export default async function DashboardCoursesPage() {
           {t("dashboard.coursesRoutePage.createCourse")}
         </Link>
       </div>
-      <CoursesManageList courses={coursesPlain} />
+      <CoursesManageList courses={coursesPlain} showTeacherColumn={showTeacherColumn} />
     </div>
   );
 }

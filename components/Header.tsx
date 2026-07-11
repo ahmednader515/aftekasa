@@ -5,7 +5,6 @@ import { useSession, signOut } from "next-auth/react";
 import { useState, useRef, useEffect } from "react";
 import type { UserRole } from "@/lib/types";
 import { ThemeToggle } from "@/components/ThemeToggle";
-import { LanguageToggle } from "@/components/LanguageToggle";
 import { useT, useLocalizedEnumValue } from "@/components/LocaleProvider";
 
 function UserMenu() {
@@ -117,7 +116,6 @@ export function Header({
             {displayName ? <span className="min-w-0 truncate">{displayName}</span> : null}
           </Link>
           <div className="flex shrink-0 items-center gap-1.5">
-            <LanguageToggle />
             <ThemeToggle />
           </div>
         </div>
@@ -176,7 +174,6 @@ export function Header({
           {displayName ? <span className="min-w-0 truncate">{displayName}</span> : null}
         </Link>
         <nav className="flex flex-shrink-0 items-center gap-2 sm:gap-7">
-          <LanguageToggle />
           <ThemeToggle />
           <Link
             href="/"

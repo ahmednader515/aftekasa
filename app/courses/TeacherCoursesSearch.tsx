@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { CourseCard } from "@/components/CourseCard";
-import { useLocale, useT } from "@/components/LocaleProvider";
+import { useT } from "@/components/LocaleProvider";
 
 type CategoryShape = {
   slug?: string;
@@ -133,7 +133,6 @@ export function TeacherCoursesSearch({
   groupByCategory?: boolean;
 }) {
   const [query, setQuery] = useState("");
-  const locale = useLocale();
   const t = useT();
 
   const filtered = useMemo(
@@ -156,13 +155,9 @@ export function TeacherCoursesSearch({
         <input
           id={inputId}
           type="search"
-          dir={locale === "ar" ? "rtl" : "ltr"}
+          dir="rtl"
           autoComplete="off"
-          placeholder={
-            locale === "ar"
-              ? t("courses.searchPlaceholder", "ابحث باسم الدورة أو القسم…")
-              : t("courses.searchPlaceholder", "Search by course or category…")
-          }
+          placeholder={t("courses.searchPlaceholder", "ابحث باسم الدورة أو القسم…")}
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           className="w-full max-w-xl rounded-[var(--radius-card)] border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-3 text-[var(--color-foreground)] shadow-[var(--shadow-card)] placeholder:text-[var(--color-muted)] focus:border-[var(--color-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/25"
