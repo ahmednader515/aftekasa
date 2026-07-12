@@ -5,6 +5,9 @@ import { useRouter } from "next/navigation";
 import type { HomepageSetting } from "@/lib/types";
 import { useT } from "@/components/LocaleProvider";
 
+const inputClass =
+  "w-full rounded-[var(--radius-btn)] border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2";
+
 export function AddBalanceSettingsForm({ initialSettings }: { initialSettings: HomepageSetting }) {
   const router = useRouter();
   const t = useT();
@@ -22,6 +25,16 @@ export function AddBalanceSettingsForm({ initialSettings }: { initialSettings: H
     addBalanceTransferInstruction: initialSettings.addBalanceTransferInstruction ?? "",
     addBalanceTransferInstructionEn: initialSettings.addBalanceTransferInstructionEn ?? "",
     addBalanceWalletNumber: initialSettings.addBalanceWalletNumber ?? "",
+    addBalanceInstapayMethodTitle: initialSettings.addBalanceInstapayMethodTitle ?? "",
+    addBalanceInstapayMethodTitleEn: initialSettings.addBalanceInstapayMethodTitleEn ?? "",
+    addBalanceInstapayTransferInstruction: initialSettings.addBalanceInstapayTransferInstruction ?? "",
+    addBalanceInstapayTransferInstructionEn: initialSettings.addBalanceInstapayTransferInstructionEn ?? "",
+    addBalanceInstapayWalletNumber: initialSettings.addBalanceInstapayWalletNumber ?? "",
+    addBalanceEtisalatMethodTitle: initialSettings.addBalanceEtisalatMethodTitle ?? "",
+    addBalanceEtisalatMethodTitleEn: initialSettings.addBalanceEtisalatMethodTitleEn ?? "",
+    addBalanceEtisalatTransferInstruction: initialSettings.addBalanceEtisalatTransferInstruction ?? "",
+    addBalanceEtisalatTransferInstructionEn: initialSettings.addBalanceEtisalatTransferInstructionEn ?? "",
+    addBalanceEtisalatWalletNumber: initialSettings.addBalanceEtisalatWalletNumber ?? "",
     addBalanceConfirmationNote: initialSettings.addBalanceConfirmationNote ?? "",
     addBalanceConfirmationNoteEn: initialSettings.addBalanceConfirmationNoteEn ?? "",
     addBalanceWhatsappNumber: initialSettings.addBalanceWhatsappNumber ?? "",
@@ -30,6 +43,10 @@ export function AddBalanceSettingsForm({ initialSettings }: { initialSettings: H
     addBalanceWaitingNote: initialSettings.addBalanceWaitingNote ?? "",
     addBalanceWaitingNoteEn: initialSettings.addBalanceWaitingNoteEn ?? "",
   });
+
+  function setField(key: keyof typeof form, value: string) {
+    setForm((f) => ({ ...f, [key]: value }));
+  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -67,113 +84,207 @@ export function AddBalanceSettingsForm({ initialSettings }: { initialSettings: H
       ) : null}
 
       <div className="rounded-[var(--radius-card)] border border-[var(--color-border)] bg-[var(--color-surface)] p-6">
-        <h3 className="mb-4 text-lg font-semibold text-[var(--color-foreground)]">{t(`${Ab}.sectionTitle`)}</h3>
+        <h3 className="mb-4 text-lg font-semibold text-[var(--color-foreground)]">
+          {t(`${Ab}.sectionPage`, "نصوص الصفحة")}
+        </h3>
         <div className="space-y-4">
           <input
             value={form.addBalanceTitle}
-            onChange={(e) => setForm((f) => ({ ...f, addBalanceTitle: e.target.value }))}
+            onChange={(e) => setField("addBalanceTitle", e.target.value)}
             placeholder={t(`${Ab}.phTitleAr`)}
-            className="w-full rounded-[var(--radius-btn)] border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2"
+            className={inputClass}
           />
           <input
             value={form.addBalanceTitleEn}
-            onChange={(e) => setForm((f) => ({ ...f, addBalanceTitleEn: e.target.value }))}
+            onChange={(e) => setField("addBalanceTitleEn", e.target.value)}
             placeholder={t(`${Ab}.phTitleEn`)}
-            className="w-full rounded-[var(--radius-btn)] border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2"
+            className={inputClass}
           />
           <input
             value={form.addBalanceSubtitle}
-            onChange={(e) => setForm((f) => ({ ...f, addBalanceSubtitle: e.target.value }))}
+            onChange={(e) => setField("addBalanceSubtitle", e.target.value)}
             placeholder={t(`${Ab}.phSubtitleAr`)}
-            className="w-full rounded-[var(--radius-btn)] border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2"
+            className={inputClass}
           />
           <input
             value={form.addBalanceSubtitleEn}
-            onChange={(e) => setForm((f) => ({ ...f, addBalanceSubtitleEn: e.target.value }))}
+            onChange={(e) => setField("addBalanceSubtitleEn", e.target.value)}
             placeholder={t(`${Ab}.phSubtitleEn`)}
-            className="w-full rounded-[var(--radius-btn)] border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2"
+            className={inputClass}
           />
+        </div>
+      </div>
+
+      <div className="rounded-[var(--radius-card)] border border-[var(--color-border)] bg-[var(--color-surface)] p-6">
+        <h3 className="mb-4 text-lg font-semibold text-[var(--color-foreground)]">
+          {t(`${Ab}.sectionVodafone`, "فودافون كاش")}
+        </h3>
+        <div className="space-y-4">
           <input
             value={form.addBalanceMethodTitle}
-            onChange={(e) => setForm((f) => ({ ...f, addBalanceMethodTitle: e.target.value }))}
+            onChange={(e) => setField("addBalanceMethodTitle", e.target.value)}
             placeholder={t(`${Ab}.phMethodTitleAr`)}
-            className="w-full rounded-[var(--radius-btn)] border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2"
+            className={inputClass}
           />
           <input
             value={form.addBalanceMethodTitleEn}
-            onChange={(e) => setForm((f) => ({ ...f, addBalanceMethodTitleEn: e.target.value }))}
+            onChange={(e) => setField("addBalanceMethodTitleEn", e.target.value)}
             placeholder={t(`${Ab}.phMethodTitleEn`)}
-            className="w-full rounded-[var(--radius-btn)] border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2"
+            className={inputClass}
           />
           <textarea
             value={form.addBalanceTransferInstruction}
-            onChange={(e) => setForm((f) => ({ ...f, addBalanceTransferInstruction: e.target.value }))}
+            onChange={(e) => setField("addBalanceTransferInstruction", e.target.value)}
             placeholder={t(`${Ab}.phTransferInstrAr`)}
             rows={2}
-            className="w-full rounded-[var(--radius-btn)] border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2"
+            className={inputClass}
           />
           <textarea
             value={form.addBalanceTransferInstructionEn}
-            onChange={(e) =>
-              setForm((f) => ({ ...f, addBalanceTransferInstructionEn: e.target.value }))
-            }
+            onChange={(e) => setField("addBalanceTransferInstructionEn", e.target.value)}
             placeholder={t(`${Ab}.phTransferInstrEn`)}
             rows={2}
-            className="w-full rounded-[var(--radius-btn)] border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2"
+            className={inputClass}
           />
           <input
             value={form.addBalanceWalletNumber}
-            onChange={(e) => setForm((f) => ({ ...f, addBalanceWalletNumber: e.target.value }))}
+            onChange={(e) => setField("addBalanceWalletNumber", e.target.value)}
             placeholder={t(`${Ab}.phWallet`)}
-            className="w-full rounded-[var(--radius-btn)] border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2"
+            className={inputClass}
+          />
+        </div>
+      </div>
+
+      <div className="rounded-[var(--radius-card)] border border-[var(--color-border)] bg-[var(--color-surface)] p-6">
+        <h3 className="mb-4 text-lg font-semibold text-[var(--color-foreground)]">
+          {t(`${Ab}.sectionInstapay`, "إنستاباي")}
+        </h3>
+        <div className="space-y-4">
+          <input
+            value={form.addBalanceInstapayMethodTitle}
+            onChange={(e) => setField("addBalanceInstapayMethodTitle", e.target.value)}
+            placeholder={t(`${Ab}.phInstapayTitleAr`, "عنوان إنستاباي (عربي)")}
+            className={inputClass}
+          />
+          <input
+            value={form.addBalanceInstapayMethodTitleEn}
+            onChange={(e) => setField("addBalanceInstapayMethodTitleEn", e.target.value)}
+            placeholder={t(`${Ab}.phInstapayTitleEn`, "عنوان إنستاباي (إنجليزي)")}
+            className={inputClass}
           />
           <textarea
+            value={form.addBalanceInstapayTransferInstruction}
+            onChange={(e) => setField("addBalanceInstapayTransferInstruction", e.target.value)}
+            placeholder={t(`${Ab}.phTransferInstrAr`)}
+            rows={2}
+            className={inputClass}
+          />
+          <textarea
+            value={form.addBalanceInstapayTransferInstructionEn}
+            onChange={(e) => setField("addBalanceInstapayTransferInstructionEn", e.target.value)}
+            placeholder={t(`${Ab}.phTransferInstrEn`)}
+            rows={2}
+            className={inputClass}
+          />
+          <input
+            value={form.addBalanceInstapayWalletNumber}
+            onChange={(e) => setField("addBalanceInstapayWalletNumber", e.target.value)}
+            placeholder={t(`${Ab}.phInstapayWallet`, "رقم/حساب إنستاباي")}
+            className={inputClass}
+          />
+        </div>
+      </div>
+
+      <div className="rounded-[var(--radius-card)] border border-[var(--color-border)] bg-[var(--color-surface)] p-6">
+        <h3 className="mb-4 text-lg font-semibold text-[var(--color-foreground)]">
+          {t(`${Ab}.sectionEtisalat`, "اتصالات كاش")}
+        </h3>
+        <div className="space-y-4">
+          <input
+            value={form.addBalanceEtisalatMethodTitle}
+            onChange={(e) => setField("addBalanceEtisalatMethodTitle", e.target.value)}
+            placeholder={t(`${Ab}.phEtisalatTitleAr`, "عنوان اتصالات كاش (عربي)")}
+            className={inputClass}
+          />
+          <input
+            value={form.addBalanceEtisalatMethodTitleEn}
+            onChange={(e) => setField("addBalanceEtisalatMethodTitleEn", e.target.value)}
+            placeholder={t(`${Ab}.phEtisalatTitleEn`, "عنوان اتصالات كاش (إنجليزي)")}
+            className={inputClass}
+          />
+          <textarea
+            value={form.addBalanceEtisalatTransferInstruction}
+            onChange={(e) => setField("addBalanceEtisalatTransferInstruction", e.target.value)}
+            placeholder={t(`${Ab}.phTransferInstrAr`)}
+            rows={2}
+            className={inputClass}
+          />
+          <textarea
+            value={form.addBalanceEtisalatTransferInstructionEn}
+            onChange={(e) => setField("addBalanceEtisalatTransferInstructionEn", e.target.value)}
+            placeholder={t(`${Ab}.phTransferInstrEn`)}
+            rows={2}
+            className={inputClass}
+          />
+          <input
+            value={form.addBalanceEtisalatWalletNumber}
+            onChange={(e) => setField("addBalanceEtisalatWalletNumber", e.target.value)}
+            placeholder={t(`${Ab}.phEtisalatWallet`, "رقم محفظة اتصالات كاش")}
+            className={inputClass}
+          />
+        </div>
+      </div>
+
+      <div className="rounded-[var(--radius-card)] border border-[var(--color-border)] bg-[var(--color-surface)] p-6">
+        <h3 className="mb-4 text-lg font-semibold text-[var(--color-foreground)]">
+          {t(`${Ab}.sectionShared`, "تأكيد التحويل وواتساب")}
+        </h3>
+        <div className="space-y-4">
+          <textarea
             value={form.addBalanceConfirmationNote}
-            onChange={(e) => setForm((f) => ({ ...f, addBalanceConfirmationNote: e.target.value }))}
+            onChange={(e) => setField("addBalanceConfirmationNote", e.target.value)}
             placeholder={t(`${Ab}.phConfirmationAr`)}
             rows={2}
-            className="w-full rounded-[var(--radius-btn)] border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2"
+            className={inputClass}
           />
           <textarea
             value={form.addBalanceConfirmationNoteEn}
-            onChange={(e) => setForm((f) => ({ ...f, addBalanceConfirmationNoteEn: e.target.value }))}
+            onChange={(e) => setField("addBalanceConfirmationNoteEn", e.target.value)}
             placeholder={t(`${Ab}.phConfirmationEn`)}
             rows={2}
-            className="w-full rounded-[var(--radius-btn)] border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2"
+            className={inputClass}
           />
           <input
             value={form.addBalanceWhatsappNumber}
-            onChange={(e) => setForm((f) => ({ ...f, addBalanceWhatsappNumber: e.target.value }))}
+            onChange={(e) => setField("addBalanceWhatsappNumber", e.target.value)}
             placeholder={t(`${Ab}.phWhatsapp`)}
-            className="w-full rounded-[var(--radius-btn)] border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2"
+            className={inputClass}
           />
           <input
             value={form.addBalanceWhatsappButtonText}
-            onChange={(e) => setForm((f) => ({ ...f, addBalanceWhatsappButtonText: e.target.value }))}
+            onChange={(e) => setField("addBalanceWhatsappButtonText", e.target.value)}
             placeholder={t(`${Ab}.phWhatsappBtnAr`)}
-            className="w-full rounded-[var(--radius-btn)] border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2"
+            className={inputClass}
           />
           <input
             value={form.addBalanceWhatsappButtonTextEn}
-            onChange={(e) =>
-              setForm((f) => ({ ...f, addBalanceWhatsappButtonTextEn: e.target.value }))
-            }
+            onChange={(e) => setField("addBalanceWhatsappButtonTextEn", e.target.value)}
             placeholder={t(`${Ab}.phWhatsappBtnEn`)}
-            className="w-full rounded-[var(--radius-btn)] border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2"
+            className={inputClass}
           />
           <textarea
             value={form.addBalanceWaitingNote}
-            onChange={(e) => setForm((f) => ({ ...f, addBalanceWaitingNote: e.target.value }))}
+            onChange={(e) => setField("addBalanceWaitingNote", e.target.value)}
             placeholder={t(`${Ab}.phWaitingNoteAr`)}
             rows={3}
-            className="w-full rounded-[var(--radius-btn)] border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2"
+            className={inputClass}
           />
           <textarea
             value={form.addBalanceWaitingNoteEn}
-            onChange={(e) => setForm((f) => ({ ...f, addBalanceWaitingNoteEn: e.target.value }))}
+            onChange={(e) => setField("addBalanceWaitingNoteEn", e.target.value)}
             placeholder={t(`${Ab}.phWaitingNoteEn`)}
             rows={3}
-            className="w-full rounded-[var(--radius-btn)] border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2"
+            className={inputClass}
           />
         </div>
       </div>

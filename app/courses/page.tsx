@@ -3,7 +3,7 @@ import { getTeacherIdsExcludedFromPublicCourseLists, getUserById } from "@/lib/d
 import { courseIsHiddenFromPublicTeacherCatalog } from "@/lib/permissions";
 import { redirect } from "next/navigation";
 import { TeacherCoursesSearch, type TeacherCourseListItem } from "./TeacherCoursesSearch";
-import { getServerTranslator } from "@/lib/i18n/server";
+import { getLocaleFromCookie, getServerTranslator } from "@/lib/i18n/server";
 import { pickLocalizedText } from "@/lib/i18n/localized-field";
 
 export const revalidate = 60;
@@ -19,7 +19,7 @@ export async function generateMetadata() {
 type Props = { searchParams: Promise<{ category?: string; teacher?: string }> };
 
 export default async function CoursesPage({ searchParams }: Props) {
-  const t = await getServerTranslator();
+  const [t, locale] = await Promise.all([getServerTranslator(), getLocaleFromCookie()]);
   const { category: categorySlug, teacher: teacherId } = await searchParams;
   let courses: Awaited<ReturnType<typeof getCoursesPublishedCached>> = [];
   try {
@@ -66,7 +66,7 @@ export default async function CoursesPage({ searchParams }: Props) {
   const categoryName =
     categorySlug && filtered.length > 0
       ? pickLocalizedText(
-          null,
+          locale,
           (filtered[0] as { category?: { nameAr?: string | null; name?: string | null } }).category?.nameAr ?? null,
           (filtered[0] as { category?: { name?: string | null } }).category?.name ?? null,
         )

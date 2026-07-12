@@ -2,7 +2,7 @@ import { getServerSession } from "next-auth";
 import { redirect, notFound } from "next/navigation";
 import Link from "next/link";
 import { authOptions } from "@/lib/auth";
-import { getCourseForEdit, getUsersByRole } from "@/lib/db";
+import { getAssignableTeachers, getCourseForEdit } from "@/lib/db";
 import { canManageCourse, readCourseManageIds } from "@/lib/permissions";
 import { EditCourseForm, type ContentOrderEntry } from "./EditCourseForm";
 
@@ -67,7 +67,7 @@ export default async function EditCoursePage({ params }: Props) {
   }
   const isAdmin = role === "ADMIN";
   const teachers = isAdmin
-    ? (await getUsersByRole("TEACHER")).map((u) => ({
+    ? (await getAssignableTeachers()).map((u) => ({
         id: u.id,
         name: u.name ?? null,
         email: u.email ?? null,
@@ -99,6 +99,10 @@ export default async function EditCoursePage({ params }: Props) {
         content: String(row.content ?? ""),
         pdfUrl: String(row.pdfUrl ?? row.pdf_url ?? ""),
         acceptsHomework: Boolean(row.acceptsHomework ?? row.accepts_homework ?? false),
+        homeworkMaterials: row.homeworkMaterials ?? row.homework_materials ?? [],
+        homeworkExplanationVideoUrl: String(
+          row.homeworkExplanationVideoUrl ?? row.homework_explanation_video_url ?? "",
+        ),
       };
     }),
     quizzes: data.quizzes.map((q) => {

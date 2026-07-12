@@ -13,6 +13,7 @@ import {
   assertAssignableTeacher,
 } from "@/lib/db";
 import { syncCourseLessons } from "@/lib/save-course-lessons";
+import { parseHomeworkMaterials } from "@/lib/homework-materials";
 import {
   saveCourseQuizzes,
   type CourseContentOrderEntry,
@@ -28,6 +29,8 @@ type LessonInput = {
   content?: string;
   pdfUrl?: string;
   acceptsHomework?: boolean;
+  homeworkMaterials?: Array<{ url?: string; fileName?: string; type?: string }>;
+  homeworkExplanationVideoUrl?: string;
 };
 type ContentOrderEntry = CourseContentOrderEntry;
 
@@ -246,6 +249,16 @@ export async function GET(
       content: l.content,
       pdfUrl: l.pdfUrl ?? l.pdf_url,
       acceptsHomework: Boolean((l as { acceptsHomework?: boolean; accepts_homework?: boolean }).acceptsHomework ?? (l as { accepts_homework?: boolean }).accepts_homework ?? false),
+      homeworkMaterials: parseHomeworkMaterials(
+        (l as { homeworkMaterials?: unknown; homework_materials?: unknown }).homeworkMaterials ??
+          (l as { homework_materials?: unknown }).homework_materials,
+      ),
+      homeworkExplanationVideoUrl: String(
+        (l as { homeworkExplanationVideoUrl?: string | null; homework_explanation_video_url?: string | null })
+          .homeworkExplanationVideoUrl ??
+          (l as { homework_explanation_video_url?: string | null }).homework_explanation_video_url ??
+          "",
+      ),
     })),
     quizzes: data.quizzes.map((q) => ({
       id: q.id,

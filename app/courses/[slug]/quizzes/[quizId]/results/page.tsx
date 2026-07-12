@@ -14,7 +14,7 @@ import { CourseContentAccessDenied } from "@/components/CourseContentAccessDenie
 import { QuizResultsClient } from "./QuizResultsClient";
 import { resolveCourseProgression, shouldApplySequentialProgression } from "@/lib/course-progression-server";
 import { findProgressionRowForQuiz } from "@/lib/course-progression";
-import { getServerTranslator } from "@/lib/i18n/server";
+import { getLocaleFromCookie, getServerTranslator } from "@/lib/i18n/server";
 import { pickLocalizedText } from "@/lib/i18n/localized-field";
 
 type Props = {
@@ -36,7 +36,7 @@ function courseHref(course: { slug?: string | null; id: string }): string {
 }
 
 export default async function QuizResultsPage({ params, searchParams }: Props) {
-  const t = await getServerTranslator();
+  const [t, locale] = await Promise.all([getServerTranslator(), getLocaleFromCookie()]);
   const { slug: courseSegment, quizId } = await params;
   const { attemptId, courseId: courseIdParam } = await searchParams;
   const courseDecoded = decodeSegment(courseSegment);
@@ -90,7 +90,7 @@ export default async function QuizResultsPage({ params, searchParams }: Props) {
         ? String(course.title_ar)
         : null;
   const courseEn = course.title != null ? String(course.title) : null;
-  const courseTitle = pickLocalizedText(null, courseAr, courseEn) || courseEn || courseAr || "";
+  const courseTitle = pickLocalizedText(locale, courseAr, courseEn) || courseEn || courseAr || "";
 
   const belongs = await quizBelongsToCourse(quizId, course.id);
   if (!belongs) notFound();

@@ -247,15 +247,30 @@ export async function getUserById(id: string): Promise<User | null> {
   return row as unknown as User;
 }
 
-/** يتحقق أن المعرّف يعود لمستخدم برتبة مدرس — لإسناد الكورسات من لوحة الأدمن */
+/** يتحقق أن المعرّف يعود لمستخدم برتبة مدرس أو أدمن — لإسناد الكورسات من لوحة الأدمن */
 export async function assertAssignableTeacher(userId: string): Promise<User> {
   const id = String(userId ?? "").trim();
   if (!id) throw new Error("معرّف المدرس مطلوب");
   const user = await getUserById(id);
-  if (!user || user.role !== "TEACHER") {
+  if (!user || (user.role !== "TEACHER" && user.role !== "ADMIN")) {
     throw new Error("المدرس المحدد غير موجود أو غير صالح");
   }
   return user;
+}
+
+/** Teachers and admins who can be assigned as a course's responsible instructor. */
+export async function getAssignableTeachers(): Promise<User[]> {
+  const [teachers, admins] = await Promise.all([
+    getUsersByRole("TEACHER"),
+    getUsersByRole("ADMIN"),
+  ]);
+  const byId = new Map<string, User>();
+  for (const u of [...teachers, ...admins]) {
+    byId.set(u.id, u);
+  }
+  return Array.from(byId.values()).sort((a, b) =>
+    (a.name ?? a.email ?? "").localeCompare(b.name ?? b.email ?? "", "ar"),
+  );
 }
 
 /** Whether the DB supports storing one active session id per user (legacy schema does not). */
@@ -1073,6 +1088,16 @@ const HOMEPAGE_DEFAULTS: HomepageSetting = {
   addBalanceTransferInstruction: "قم بتحويل المبلغ المطلوب إلى رقم المحفظة التالي:",
   addBalanceTransferInstructionEn: null,
   addBalanceWalletNumber: "01023005622",
+  addBalanceInstapayMethodTitle: "إنستاباي",
+  addBalanceInstapayMethodTitleEn: null,
+  addBalanceInstapayTransferInstruction: "قم بتحويل المبلغ المطلوب عبر إنستاباي إلى الحساب التالي:",
+  addBalanceInstapayTransferInstructionEn: null,
+  addBalanceInstapayWalletNumber: "",
+  addBalanceEtisalatMethodTitle: "اتصالات كاش",
+  addBalanceEtisalatMethodTitleEn: null,
+  addBalanceEtisalatTransferInstruction: "قم بتحويل المبلغ المطلوب إلى رقم محفظة اتصالات كاش التالي:",
+  addBalanceEtisalatTransferInstructionEn: null,
+  addBalanceEtisalatWalletNumber: "",
   addBalanceConfirmationNote:
     "بعد التحويل، يجب إرسال صورة تأكيد التحويل على واتساب على الرقم",
   addBalanceConfirmationNoteEn: null,
@@ -1325,6 +1350,16 @@ async function ensureAddBalanceSettingsColumns(): Promise<void> {
       await sql`ALTER TABLE "HomepageSetting" ADD COLUMN IF NOT EXISTS add_balance_method_title TEXT`;
       await sql`ALTER TABLE "HomepageSetting" ADD COLUMN IF NOT EXISTS add_balance_transfer_instruction TEXT`;
       await sql`ALTER TABLE "HomepageSetting" ADD COLUMN IF NOT EXISTS add_balance_wallet_number TEXT`;
+      await sql`ALTER TABLE "HomepageSetting" ADD COLUMN IF NOT EXISTS add_balance_instapay_method_title TEXT`;
+      await sql`ALTER TABLE "HomepageSetting" ADD COLUMN IF NOT EXISTS add_balance_instapay_method_title_en TEXT`;
+      await sql`ALTER TABLE "HomepageSetting" ADD COLUMN IF NOT EXISTS add_balance_instapay_transfer_instruction TEXT`;
+      await sql`ALTER TABLE "HomepageSetting" ADD COLUMN IF NOT EXISTS add_balance_instapay_transfer_instruction_en TEXT`;
+      await sql`ALTER TABLE "HomepageSetting" ADD COLUMN IF NOT EXISTS add_balance_instapay_wallet_number TEXT`;
+      await sql`ALTER TABLE "HomepageSetting" ADD COLUMN IF NOT EXISTS add_balance_etisalat_method_title TEXT`;
+      await sql`ALTER TABLE "HomepageSetting" ADD COLUMN IF NOT EXISTS add_balance_etisalat_method_title_en TEXT`;
+      await sql`ALTER TABLE "HomepageSetting" ADD COLUMN IF NOT EXISTS add_balance_etisalat_transfer_instruction TEXT`;
+      await sql`ALTER TABLE "HomepageSetting" ADD COLUMN IF NOT EXISTS add_balance_etisalat_transfer_instruction_en TEXT`;
+      await sql`ALTER TABLE "HomepageSetting" ADD COLUMN IF NOT EXISTS add_balance_etisalat_wallet_number TEXT`;
       await sql`ALTER TABLE "HomepageSetting" ADD COLUMN IF NOT EXISTS add_balance_confirmation_note TEXT`;
       await sql`ALTER TABLE "HomepageSetting" ADD COLUMN IF NOT EXISTS add_balance_whatsapp_number TEXT`;
       await sql`ALTER TABLE "HomepageSetting" ADD COLUMN IF NOT EXISTS add_balance_whatsapp_button_text TEXT`;
@@ -2082,6 +2117,44 @@ async function getHomepageSettingsUncached(): Promise<HomepageSetting> {
           : null,
       addBalanceWalletNumber:
         (c.addBalanceWalletNumber as string) ?? HOMEPAGE_DEFAULTS.addBalanceWalletNumber,
+      addBalanceInstapayMethodTitle:
+        (c.addBalanceInstapayMethodTitle as string) ??
+        HOMEPAGE_DEFAULTS.addBalanceInstapayMethodTitle,
+      addBalanceInstapayMethodTitleEn:
+        row.add_balance_instapay_method_title_en != null &&
+        String(row.add_balance_instapay_method_title_en).trim() !== ""
+          ? String(row.add_balance_instapay_method_title_en).trim().slice(0, 300)
+          : null,
+      addBalanceInstapayTransferInstruction:
+        (c.addBalanceInstapayTransferInstruction as string) ??
+        HOMEPAGE_DEFAULTS.addBalanceInstapayTransferInstruction,
+      addBalanceInstapayTransferInstructionEn:
+        row.add_balance_instapay_transfer_instruction_en != null &&
+        String(row.add_balance_instapay_transfer_instruction_en).trim() !== ""
+          ? String(row.add_balance_instapay_transfer_instruction_en).trim().slice(0, 1000)
+          : null,
+      addBalanceInstapayWalletNumber:
+        (c.addBalanceInstapayWalletNumber as string) ??
+        HOMEPAGE_DEFAULTS.addBalanceInstapayWalletNumber,
+      addBalanceEtisalatMethodTitle:
+        (c.addBalanceEtisalatMethodTitle as string) ??
+        HOMEPAGE_DEFAULTS.addBalanceEtisalatMethodTitle,
+      addBalanceEtisalatMethodTitleEn:
+        row.add_balance_etisalat_method_title_en != null &&
+        String(row.add_balance_etisalat_method_title_en).trim() !== ""
+          ? String(row.add_balance_etisalat_method_title_en).trim().slice(0, 300)
+          : null,
+      addBalanceEtisalatTransferInstruction:
+        (c.addBalanceEtisalatTransferInstruction as string) ??
+        HOMEPAGE_DEFAULTS.addBalanceEtisalatTransferInstruction,
+      addBalanceEtisalatTransferInstructionEn:
+        row.add_balance_etisalat_transfer_instruction_en != null &&
+        String(row.add_balance_etisalat_transfer_instruction_en).trim() !== ""
+          ? String(row.add_balance_etisalat_transfer_instruction_en).trim().slice(0, 1000)
+          : null,
+      addBalanceEtisalatWalletNumber:
+        (c.addBalanceEtisalatWalletNumber as string) ??
+        HOMEPAGE_DEFAULTS.addBalanceEtisalatWalletNumber,
       addBalanceConfirmationNote:
         (c.addBalanceConfirmationNote as string) ??
         HOMEPAGE_DEFAULTS.addBalanceConfirmationNote,
@@ -2239,6 +2312,16 @@ export async function updateHomepageSettings(data: {
   add_balance_transfer_instruction?: string | null;
   add_balance_transfer_instruction_en?: string | null;
   add_balance_wallet_number?: string | null;
+  add_balance_instapay_method_title?: string | null;
+  add_balance_instapay_method_title_en?: string | null;
+  add_balance_instapay_transfer_instruction?: string | null;
+  add_balance_instapay_transfer_instruction_en?: string | null;
+  add_balance_instapay_wallet_number?: string | null;
+  add_balance_etisalat_method_title?: string | null;
+  add_balance_etisalat_method_title_en?: string | null;
+  add_balance_etisalat_transfer_instruction?: string | null;
+  add_balance_etisalat_transfer_instruction_en?: string | null;
+  add_balance_etisalat_wallet_number?: string | null;
   add_balance_confirmation_note?: string | null;
   add_balance_confirmation_note_en?: string | null;
   add_balance_whatsapp_number?: string | null;
@@ -2609,6 +2692,36 @@ export async function updateHomepageSettings(data: {
   }
   if (data.add_balance_wallet_number !== undefined) {
     await sql`UPDATE "HomepageSetting" SET add_balance_wallet_number = ${data.add_balance_wallet_number}, updated_at = NOW() WHERE id = 'default'`;
+  }
+  if (data.add_balance_instapay_method_title !== undefined) {
+    await sql`UPDATE "HomepageSetting" SET add_balance_instapay_method_title = ${data.add_balance_instapay_method_title}, updated_at = NOW() WHERE id = 'default'`;
+  }
+  if (data.add_balance_instapay_method_title_en !== undefined) {
+    await sql`UPDATE "HomepageSetting" SET add_balance_instapay_method_title_en = ${data.add_balance_instapay_method_title_en}, updated_at = NOW() WHERE id = 'default'`;
+  }
+  if (data.add_balance_instapay_transfer_instruction !== undefined) {
+    await sql`UPDATE "HomepageSetting" SET add_balance_instapay_transfer_instruction = ${data.add_balance_instapay_transfer_instruction}, updated_at = NOW() WHERE id = 'default'`;
+  }
+  if (data.add_balance_instapay_transfer_instruction_en !== undefined) {
+    await sql`UPDATE "HomepageSetting" SET add_balance_instapay_transfer_instruction_en = ${data.add_balance_instapay_transfer_instruction_en}, updated_at = NOW() WHERE id = 'default'`;
+  }
+  if (data.add_balance_instapay_wallet_number !== undefined) {
+    await sql`UPDATE "HomepageSetting" SET add_balance_instapay_wallet_number = ${data.add_balance_instapay_wallet_number}, updated_at = NOW() WHERE id = 'default'`;
+  }
+  if (data.add_balance_etisalat_method_title !== undefined) {
+    await sql`UPDATE "HomepageSetting" SET add_balance_etisalat_method_title = ${data.add_balance_etisalat_method_title}, updated_at = NOW() WHERE id = 'default'`;
+  }
+  if (data.add_balance_etisalat_method_title_en !== undefined) {
+    await sql`UPDATE "HomepageSetting" SET add_balance_etisalat_method_title_en = ${data.add_balance_etisalat_method_title_en}, updated_at = NOW() WHERE id = 'default'`;
+  }
+  if (data.add_balance_etisalat_transfer_instruction !== undefined) {
+    await sql`UPDATE "HomepageSetting" SET add_balance_etisalat_transfer_instruction = ${data.add_balance_etisalat_transfer_instruction}, updated_at = NOW() WHERE id = 'default'`;
+  }
+  if (data.add_balance_etisalat_transfer_instruction_en !== undefined) {
+    await sql`UPDATE "HomepageSetting" SET add_balance_etisalat_transfer_instruction_en = ${data.add_balance_etisalat_transfer_instruction_en}, updated_at = NOW() WHERE id = 'default'`;
+  }
+  if (data.add_balance_etisalat_wallet_number !== undefined) {
+    await sql`UPDATE "HomepageSetting" SET add_balance_etisalat_wallet_number = ${data.add_balance_etisalat_wallet_number}, updated_at = NOW() WHERE id = 'default'`;
   }
   if (data.add_balance_confirmation_note !== undefined) {
     await sql`UPDATE "HomepageSetting" SET add_balance_confirmation_note = ${data.add_balance_confirmation_note}, updated_at = NOW() WHERE id = 'default'`;
@@ -4140,6 +4253,18 @@ export async function getLessonById(lessonId: string): Promise<Lesson | null> {
   return chapterRow ? mapLegacyChapterToLesson(chapterRow) : null;
 }
 
+/** أعمدة مواد الواجب وفيديو الشرح على الحصة */
+export async function ensureLessonHomeworkAssignmentColumns(): Promise<void> {
+  return ensureOnce("ensureLessonHomeworkAssignmentColumns", async () => {
+    try {
+      await sql`ALTER TABLE "Lesson" ADD COLUMN IF NOT EXISTS homework_materials TEXT`;
+      await sql`ALTER TABLE "Lesson" ADD COLUMN IF NOT EXISTS homework_explanation_video_url TEXT`;
+    } catch {
+      /* DDL غير متاح */
+    }
+  });
+}
+
 export async function createLesson(data: {
   course_id: string;
   title: string;
@@ -4150,9 +4275,13 @@ export async function createLesson(data: {
   pdf_url?: string | null;
   order: number;
   accepts_homework?: boolean;
+  homework_materials?: string | null;
+  homework_explanation_video_url?: string | null;
 }): Promise<Lesson> {
   const id = generateId();
   const acceptsHomework = data.accepts_homework ?? false;
+  const homeworkMaterials = data.homework_materials ?? null;
+  const homeworkExplanationVideoUrl = data.homework_explanation_video_url?.trim() || null;
   const legacy = (await detectSchemaMode(sql)) === "legacy";
 
   if (legacy) {
@@ -4167,19 +4296,35 @@ export async function createLesson(data: {
       )
     `;
   } else {
+    await ensureLessonHomeworkAssignmentColumns();
     try {
       await sql`
-        INSERT INTO "Lesson" (id, course_id, title, title_ar, slug, content, video_url, pdf_url, "order", accepts_homework)
-        VALUES (${id}, ${data.course_id}, ${data.title}, ${data.title_ar ?? null}, ${data.slug}, ${data.content ?? null}, ${data.video_url ?? null}, ${data.pdf_url ?? null}, ${data.order}, ${acceptsHomework})
+        INSERT INTO "Lesson" (
+          id, course_id, title, title_ar, slug, content, video_url, pdf_url, "order",
+          accepts_homework, homework_materials, homework_explanation_video_url
+        )
+        VALUES (
+          ${id}, ${data.course_id}, ${data.title}, ${data.title_ar ?? null}, ${data.slug},
+          ${data.content ?? null}, ${data.video_url ?? null}, ${data.pdf_url ?? null}, ${data.order},
+          ${acceptsHomework}, ${homeworkMaterials}, ${homeworkExplanationVideoUrl}
+        )
       `;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      const columnMissing = msg.includes("accepts_homework") || (msg.includes("column") && msg.includes("does not exist"));
+      const columnMissing = msg.includes("accepts_homework") || msg.includes("homework_materials") || msg.includes("homework_explanation_video_url") || (msg.includes("column") && msg.includes("does not exist"));
       if (columnMissing) {
+        await ensureLessonHomeworkAssignmentColumns();
         await sql`ALTER TABLE "Lesson" ADD COLUMN IF NOT EXISTS accepts_homework BOOLEAN NOT NULL DEFAULT false`;
         await sql`
-          INSERT INTO "Lesson" (id, course_id, title, title_ar, slug, content, video_url, pdf_url, "order", accepts_homework)
-          VALUES (${id}, ${data.course_id}, ${data.title}, ${data.title_ar ?? null}, ${data.slug}, ${data.content ?? null}, ${data.video_url ?? null}, ${data.pdf_url ?? null}, ${data.order}, ${acceptsHomework})
+          INSERT INTO "Lesson" (
+            id, course_id, title, title_ar, slug, content, video_url, pdf_url, "order",
+            accepts_homework, homework_materials, homework_explanation_video_url
+          )
+          VALUES (
+            ${id}, ${data.course_id}, ${data.title}, ${data.title_ar ?? null}, ${data.slug},
+            ${data.content ?? null}, ${data.video_url ?? null}, ${data.pdf_url ?? null}, ${data.order},
+            ${acceptsHomework}, ${homeworkMaterials}, ${homeworkExplanationVideoUrl}
+          )
         `;
       } else {
         throw err;
@@ -4219,9 +4364,13 @@ export async function updateLesson(
     pdf_url?: string | null;
     order: number;
     accepts_homework?: boolean;
+    homework_materials?: string | null;
+    homework_explanation_video_url?: string | null;
   },
 ): Promise<void> {
   const acceptsHomework = data.accepts_homework ?? false;
+  const homeworkMaterials = data.homework_materials ?? null;
+  const homeworkExplanationVideoUrl = data.homework_explanation_video_url?.trim() || null;
   const legacy = (await detectSchemaMode(sql)) === "legacy";
 
   if (legacy) {
@@ -4238,6 +4387,7 @@ export async function updateLesson(
     return;
   }
 
+  await ensureLessonHomeworkAssignmentColumns();
   try {
     await sql`
       UPDATE "Lesson"
@@ -4249,13 +4399,16 @@ export async function updateLesson(
           pdf_url = ${data.pdf_url ?? null},
           "order" = ${data.order},
           accepts_homework = ${acceptsHomework},
+          homework_materials = ${homeworkMaterials},
+          homework_explanation_video_url = ${homeworkExplanationVideoUrl},
           updated_at = NOW()
       WHERE id = ${id}
     `;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    const columnMissing = msg.includes("accepts_homework") || (msg.includes("column") && msg.includes("does not exist"));
+    const columnMissing = msg.includes("accepts_homework") || msg.includes("homework_materials") || msg.includes("homework_explanation_video_url") || (msg.includes("column") && msg.includes("does not exist"));
     if (columnMissing) {
+      await ensureLessonHomeworkAssignmentColumns();
       await sql`ALTER TABLE "Lesson" ADD COLUMN IF NOT EXISTS accepts_homework BOOLEAN NOT NULL DEFAULT false`;
       await sql`
         UPDATE "Lesson"
@@ -4267,6 +4420,8 @@ export async function updateLesson(
             pdf_url = ${data.pdf_url ?? null},
             "order" = ${data.order},
             accepts_homework = ${acceptsHomework},
+            homework_materials = ${homeworkMaterials},
+            homework_explanation_video_url = ${homeworkExplanationVideoUrl},
             updated_at = NOW()
         WHERE id = ${id}
       `;
@@ -4340,6 +4495,42 @@ export async function getCompletedLessonIdsForCourse(
   `;
   return new Set((rows as { lesson_id: string }[]).map((r) => String(r.lesson_id)));
 }
+
+/** Lesson IDs in a course for which the user has submitted at least one homework. */
+export async function getLessonIdsWithHomeworkSubmittedForCourse(
+  userId: string,
+  courseId: string,
+): Promise<Set<string>> {
+  await ensureHomeworkSubmissionSchema();
+  try {
+    const rows = await sql`
+      SELECT DISTINCT lesson_id FROM "HomeworkSubmission"
+      WHERE user_id = ${userId}
+        AND course_id = ${courseId}
+        AND lesson_id IS NOT NULL
+    `;
+    return new Set(
+      (rows as { lesson_id: string | null }[])
+        .map((r) => (r.lesson_id != null ? String(r.lesson_id) : ""))
+        .filter(Boolean),
+    );
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (msg.includes("lesson_id") || (msg.includes("column") && msg.includes("does not exist"))) {
+      return new Set();
+    }
+    throw err;
+  }
+}
+
+export async function hasHomeworkSubmissionForLesson(
+  userId: string,
+  lessonId: string,
+): Promise<boolean> {
+  const rows = await getHomeworkSubmissionsByLessonAndUser(lessonId, userId);
+  return rows.length > 0;
+}
+
 
 /** عدد الحصص المكتملة لكل طالب — اختيارياً ضمن كورسات محددة (لإحصائيات المدرس) */
 export async function getCompletedLessonCountsForUsers(
@@ -4592,6 +4783,7 @@ export async function getCourseWithContent(segment: string): Promise<{
   lessons: Record<string, unknown>[];
   quizzes: Array<Record<string, unknown> & { _count: { questions: number } }>;
 } | null> {
+  await ensureLessonHomeworkAssignmentColumns();
   const isId = isCourseSegmentId(segment);
   let courseRow: Record<string, unknown> | null = null;
   if (isId) {
@@ -4682,6 +4874,7 @@ export async function getCourseForEdit(courseId: string): Promise<{
 } | null> {
   const legacy = (await detectSchemaMode(sql)) === "legacy";
   await ensureQuizFeaturesSchema();
+  await ensureLessonHomeworkAssignmentColumns();
   const courseRows = await sql`SELECT * FROM "Course" WHERE id = ${courseId} LIMIT 1`;
   const courseRow = courseRows[0] as Record<string, unknown> | undefined;
   if (!courseRow) return null;

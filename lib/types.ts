@@ -248,8 +248,20 @@ export interface HomepageSetting {
   /** نص التحويل قبل رقم المحفظة */
   addBalanceTransferInstruction?: string | null;
   addBalanceTransferInstructionEn?: string | null;
-  /** رقم المحفظة/التحويل */
+  /** رقم المحفظة/التحويل (فودافون كاش) */
   addBalanceWalletNumber?: string | null;
+  /** إنستاباي */
+  addBalanceInstapayMethodTitle?: string | null;
+  addBalanceInstapayMethodTitleEn?: string | null;
+  addBalanceInstapayTransferInstruction?: string | null;
+  addBalanceInstapayTransferInstructionEn?: string | null;
+  addBalanceInstapayWalletNumber?: string | null;
+  /** اتصالات كاش */
+  addBalanceEtisalatMethodTitle?: string | null;
+  addBalanceEtisalatMethodTitleEn?: string | null;
+  addBalanceEtisalatTransferInstruction?: string | null;
+  addBalanceEtisalatTransferInstructionEn?: string | null;
+  addBalanceEtisalatWalletNumber?: string | null;
   /** ملاحظة ما بعد التحويل */
   addBalanceConfirmationNote?: string | null;
   addBalanceConfirmationNoteEn?: string | null;
@@ -344,6 +356,9 @@ export interface Lesson {
   order: number;
   course_id: string;
   accepts_homework?: boolean;
+  /** JSON array of { url, fileName, type: "pdf"|"image" } */
+  homework_materials?: string | null;
+  homework_explanation_video_url?: string | null;
   created_at: Date;
   updated_at: Date;
 }

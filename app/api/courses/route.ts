@@ -17,6 +17,7 @@ import {
   type CourseQuizInput,
 } from "@/lib/save-course-quizzes";
 import { revalidatePublicCache, PUBLIC_CACHE_TAGS } from "@/lib/public-data-cache";
+import { serializeHomeworkMaterials, parseHomeworkMaterials } from "@/lib/homework-materials";
 
 export async function GET() {
   try {
@@ -31,7 +32,16 @@ export async function GET() {
   }
 }
 
-type LessonInput = { title: string; titleAr?: string; videoUrl?: string; content?: string; pdfUrl?: string };
+type LessonInput = {
+  title: string;
+  titleAr?: string;
+  videoUrl?: string;
+  content?: string;
+  pdfUrl?: string;
+  acceptsHomework?: boolean;
+  homeworkMaterials?: Array<{ url?: string; fileName?: string; type?: string }>;
+  homeworkExplanationVideoUrl?: string;
+};
 type QuizInput = CourseQuizInput;
 
 export async function POST(request: NextRequest) {
@@ -186,6 +196,8 @@ export async function POST(request: NextRequest) {
       pdf_url: le.pdfUrl?.trim() || null,
       order: orderVal,
       accepts_homework: !!(le as { acceptsHomework?: boolean }).acceptsHomework,
+      homework_materials: serializeHomeworkMaterials(parseHomeworkMaterials(le.homeworkMaterials)),
+      homework_explanation_video_url: le.homeworkExplanationVideoUrl?.trim() || null,
     });
   }
 

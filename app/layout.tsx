@@ -16,9 +16,10 @@ import {
 } from "@/lib/db";
 import { normalizeHeroHex } from "@/lib/hero-bg";
 import { getDir, makeTranslator } from "@/lib/i18n/core";
-import { getServerTranslator } from "@/lib/i18n/server";
+import { getLocaleFromCookie } from "@/lib/i18n/server";
 import { LocaleProvider } from "@/components/LocaleProvider";
-import { pickLocalizedText, settingTextOrDefault } from "@/lib/i18n/localized-field";
+import { homepageDefaultForLocale } from "@/lib/homepage-default-for-locale";
+import { pickLocalizedText } from "@/lib/i18n/localized-field";
 import {
   HOMEPAGE_DEFAULT_FOOTER_COPYRIGHT_AR,
   HOMEPAGE_DEFAULT_FOOTER_TAGLINE_AR,
@@ -38,11 +39,18 @@ export const viewport: Viewport = {
 };
 
 export async function generateMetadata(): Promise<Metadata> {
-  const defaultTitle = "منصتي التعليمية | دورات وتعلم أونلاين";
-  const defaultDescription = "منصة تعليمية حديثة لدورات الرياضيات — تعلم بأسلوب واضح ومنهجية متدرجة";
+  const locale = await getLocaleFromCookie();
+  const defaultTitle =
+    locale === "ar"
+      ? "منصتي التعليمية | دورات وتعلم أونلاين"
+      : "My Learning Platform | Courses and Online Learning";
+  const defaultDescription =
+    locale === "ar"
+      ? "منصة تعليمية حديثة لدورات الرياضيات — تعلم بأسلوب واضح ومنهجية متدرجة"
+      : "A modern learning platform for mathematics courses — clear teaching with a structured method";
   try {
     const settings = await getHomepageSettings();
-    const title = pickLocalizedText(null, settings.pageTitle, settings.pageTitleEn) || defaultTitle;
+    const title = pickLocalizedText(locale, settings.pageTitle, settings.pageTitleEn) || defaultTitle;
     return { title, description: defaultDescription };
   } catch {
     return { title: defaultTitle, description: defaultDescription };
@@ -54,8 +62,9 @@ export default async function RootLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
-  const dir = getDir();
-  const t = makeTranslator();
+  const locale = await getLocaleFromCookie();
+  const dir = getDir(locale);
+  const t = makeTranslator(locale);
   let platformName: string | null = null;
   let headerLogoUrl: string | null = null;
   let platformPrimaryColor: string | null = null;
@@ -64,29 +73,35 @@ export default async function RootLayout({
   let footerCopyright = t("footer.defaultCopyright", "منصتي التعليمية. جميع الحقوق محفوظة.");
   try {
     const settings = await getHomepageSettings();
-    platformName = pickLocalizedText(null, settings.platformName, settings.platformNameEn) || null;
+    platformName = pickLocalizedText(locale, settings.platformName, settings.platformNameEn) || null;
     headerLogoUrl = settings.headerLogoUrl ?? null;
     platformPrimaryColor = normalizeHeroHex(String(settings.primaryColor ?? "")) ?? null;
-    const rawFooterTitle = pickLocalizedText(null, settings.footerTitle, settings.footerTitleEn);
-    const rawFooterTagline = pickLocalizedText(null, settings.footerTagline, settings.footerTaglineEn);
-    const rawFooterCopyright = pickLocalizedText(null, settings.footerCopyright, settings.footerCopyrightEn);
-    footerTitle = settingTextOrDefault(
+    const rawFooterTitle = pickLocalizedText(locale, settings.footerTitle, settings.footerTitleEn);
+    const rawFooterTagline = pickLocalizedText(locale, settings.footerTagline, settings.footerTaglineEn);
+    const rawFooterCopyright = pickLocalizedText(locale, settings.footerCopyright, settings.footerCopyrightEn);
+    footerTitle = homepageDefaultForLocale(
+      locale,
       rawFooterTitle,
-      t,
-      "footer.defaultTitle",
       HOMEPAGE_DEFAULT_FOOTER_TITLE_AR,
+      "footer.defaultTitle",
+      t,
+      "My Learning Platform",
     );
-    footerTagline = settingTextOrDefault(
+    footerTagline = homepageDefaultForLocale(
+      locale,
       rawFooterTagline,
-      t,
-      "footer.defaultTagline",
       HOMEPAGE_DEFAULT_FOOTER_TAGLINE_AR,
-    );
-    footerCopyright = settingTextOrDefault(
-      rawFooterCopyright,
+      "footer.defaultTagline",
       t,
-      "footer.defaultCopyright",
+      "Learn with a modern and clear method",
+    );
+    footerCopyright = homepageDefaultForLocale(
+      locale,
+      rawFooterCopyright,
       HOMEPAGE_DEFAULT_FOOTER_COPYRIGHT_AR,
+      "footer.defaultCopyright",
+      t,
+      "My Learning Platform. All rights reserved.",
     );
   } catch {
     // استخدام الافتراضي في الهيدر والفوتر
@@ -100,7 +115,7 @@ export default async function RootLayout({
       if (active) {
         const exp = await getLatestPlatformSubscriptionExpiry(session.user.id);
         if (exp) {
-          platformSubscriptionExpiryLabel = new Intl.DateTimeFormat("ar-EG", {
+          platformSubscriptionExpiryLabel = new Intl.DateTimeFormat(locale === "ar" ? "ar-EG" : "en-US", {
             weekday: "long",
             year: "numeric",
             month: "long",
@@ -118,7 +133,7 @@ export default async function RootLayout({
   }
 
   return (
-    <html lang="ar" dir={dir} suppressHydrationWarning>
+    <html lang={locale} dir={dir} suppressHydrationWarning>
       <head>
         <script
           dangerouslySetInnerHTML={{
@@ -142,7 +157,7 @@ export default async function RootLayout({
           speed={300}
           shadow="0 0 10px rgba(13,148,136,0.4)"
         />
-        <LocaleProvider>
+        <LocaleProvider locale={locale}>
           <SessionProvider>
             <StoreSplashProvider>
             <ForceLogoutGuard />

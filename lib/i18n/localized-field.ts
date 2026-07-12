@@ -1,15 +1,17 @@
-/** Prefer Arabic DB text; fall back to English column if Arabic is empty. */
+import type { Locale } from "./types";
+
 export function pickLocalizedText(
-  _locale: unknown,
+  locale: Locale,
   arabicValue: string | null | undefined,
-  englishValue?: string | null | undefined,
+  englishValue: string | null | undefined,
 ): string {
   const ar = (arabicValue ?? "").trim();
   const en = (englishValue ?? "").trim();
+  if (locale === "en") return en || ar;
   return ar || en;
 }
 
-/** Homepage / settings: DB value or translated Arabic default. */
+/** Homepage / settings: DB value or translated default for the active locale. */
 export function settingTextOrDefault(
   raw: string | null | undefined,
   t: (key: string, fallback?: string) => string,

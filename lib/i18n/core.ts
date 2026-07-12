@@ -1,5 +1,7 @@
+import { DEFAULT_LOCALE, SUPPORTED_LOCALES } from "./constants";
 import { arMessages } from "./messages/ar";
-import type { MessageValue, Messages } from "./types";
+import { enMessages } from "./messages/en";
+import type { Locale, MessageValue, Messages } from "./types";
 
 function isMessagesObject(value: MessageValue | undefined): value is Messages {
   return typeof value === "object" && value !== null;
@@ -15,20 +17,25 @@ function resolveMessage(messages: Messages, key: string): string | undefined {
   return typeof current === "string" ? current : undefined;
 }
 
-export function getDir(): "rtl" {
-  return "rtl";
+export function normalizeLocale(raw: string | null | undefined): Locale {
+  if (!raw) return DEFAULT_LOCALE;
+  const normalized = raw.trim().toLowerCase();
+  return (SUPPORTED_LOCALES as string[]).includes(normalized)
+    ? (normalized as Locale)
+    : DEFAULT_LOCALE;
 }
 
-export function getMessages(): Messages {
-  return arMessages;
+export function getDir(locale: Locale): "rtl" | "ltr" {
+  return locale === "ar" ? "rtl" : "ltr";
 }
 
-export function makeTranslator() {
-  const messages = getMessages();
+export function getMessages(locale: Locale): Messages {
+  return locale === "en" ? enMessages : arMessages;
+}
+
+export function makeTranslator(locale: Locale) {
+  const messages = getMessages(locale);
   return (key: string, fallback?: string): string => {
     return resolveMessage(messages, key) ?? fallback ?? key;
   };
 }
-
-/** Static Arabic translator for modules that cannot use hooks. */
-export const t = makeTranslator();

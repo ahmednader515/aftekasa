@@ -17,7 +17,7 @@ import {
 import { CourseContentProgressList } from "@/components/CourseContentProgressList";
 import { resolveCourseProgression } from "@/lib/course-progression-server";
 import { EnrollButton } from "./EnrollButton";
-import { getServerTranslator } from "@/lib/i18n/server";
+import { getLocaleFromCookie, getServerTranslator } from "@/lib/i18n/server";
 import { pickLocalizedText } from "@/lib/i18n/localized-field";
 import { isCourseSegmentId } from "@/lib/legacy-schema";
 
@@ -42,18 +42,18 @@ function normalizeSlugForUrl(s: string | null | undefined): string {
 }
 
 export async function generateMetadata({ params }: Props) {
-  const t = await getServerTranslator();
+  const [t, locale] = await Promise.all([getServerTranslator(), getLocaleFromCookie()]);
   const { slug: segment } = await params;
   const decoded = decodeSlug(segment);
   const data = await getCourseWithContentCached(decoded);
   const course = data?.course;
   if (!course) return { title: t("courses.notFoundCourse", "Course not found") };
   const courseTitle = pickLocalizedText(
-    null,
+    locale,
     (course as { titleAr?: string | null; title?: string | null }).titleAr ?? null,
     (course as { title?: string | null }).title ?? null,
   );
-  const courseDescription = pickLocalizedText(null,
+  const courseDescription = pickLocalizedText(locale,
     (course as { shortDesc?: string | null; description?: string | null }).shortDesc ??
       (course as { description?: string | null }).description ??
       null,
@@ -68,7 +68,7 @@ export async function generateMetadata({ params }: Props) {
 }
 
 export default async function CoursePage({ params }: Props) {
-  const t = await getServerTranslator();
+  const [t, locale] = await Promise.all([getServerTranslator(), getLocaleFromCookie()]);
   const { slug: segment } = await params;
   const decoded = decodeSlug(segment);
   const session = await getServerSession(authOptions);
@@ -124,15 +124,15 @@ export default async function CoursePage({ params }: Props) {
     lessons: data.lessons,
     quizzes: data.quizzes,
   };
-  const title = pickLocalizedText(null,
+  const title = pickLocalizedText(locale,
     (course as { titleAr?: string | null; title?: string | null }).titleAr ?? null,
     (course as { title?: string | null }).title ?? null,
   );
-  const categoryName = pickLocalizedText(null,
+  const categoryName = pickLocalizedText(locale,
     (course.category as { nameAr?: string | null; name?: string | null })?.nameAr ?? null,
     (course.category as { name?: string | null })?.name ?? null,
   );
-  const courseDescription = pickLocalizedText(null,
+  const courseDescription = pickLocalizedText(locale,
     (course as { description?: string | null }).description ?? null,
     (course as { descriptionEn?: string | null; description_en?: string | null }).descriptionEn ??
       (course as { description_en?: string | null }).description_en ??
@@ -193,7 +193,7 @@ export default async function CoursePage({ params }: Props) {
               <div className="relative mb-4">
                 <img
                   src={homepageSettings.teacherImageUrl?.trim() || "/instructor.png"}
-                  alt={pickLocalizedText(null, homepageSettings.heroTitle, homepageSettings.heroTitleEn) || "المدرس"}
+                  alt={pickLocalizedText(locale, homepageSettings.heroTitle, homepageSettings.heroTitleEn) || "المدرس"}
                   className="h-32 w-32 border-2 border-black border-dotted object-cover"
                 />
                 <div className="absolute bottom-0 right-0 h-6 w-6 rounded-full border-4 border-[var(--color-surface)] bg-[var(--color-success)]" />
@@ -218,7 +218,7 @@ export default async function CoursePage({ params }: Props) {
               </div>
               <div className="mt-2 w-full border-t border-[var(--color-border)] pt-4">
                 <p className="text-sm text-[var(--color-muted)]">
-                  {pickLocalizedText(null, homepageSettings.heroSlogan, homepageSettings.heroSloganEn) ||
+                  {pickLocalizedText(locale, homepageSettings.heroSlogan, homepageSettings.heroSloganEn) ||
                     t("courses.allCoursesSubtitle", "Choose the right course and start learning step by step")}
                 </p>
               </div>

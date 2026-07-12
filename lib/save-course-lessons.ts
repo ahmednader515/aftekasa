@@ -5,6 +5,7 @@ import {
   getLessonIdsByCourseId,
 } from "./db";
 import type { CourseContentOrderEntry } from "./save-course-quizzes";
+import { serializeHomeworkMaterials, type HomeworkMaterial } from "./homework-materials";
 
 export type LessonSyncInput = {
   id?: string;
@@ -14,6 +15,8 @@ export type LessonSyncInput = {
   content?: string;
   pdfUrl?: string;
   acceptsHomework?: boolean;
+  homeworkMaterials?: HomeworkMaterial[];
+  homeworkExplanationVideoUrl?: string;
 };
 
 export async function syncCourseLessons(params: {
@@ -39,6 +42,8 @@ export async function syncCourseLessons(params: {
       pdf_url: le.pdfUrl?.trim() || null,
       order: orderVal,
       accepts_homework: !!le.acceptsHomework,
+      homework_materials: serializeHomeworkMaterials(le.homeworkMaterials),
+      homework_explanation_video_url: le.homeworkExplanationVideoUrl?.trim() || null,
     };
 
     if (lessonId && existingIds.has(lessonId)) {

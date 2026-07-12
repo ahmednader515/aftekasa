@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { useRouter } from "next/navigation";
+import { useLessonUnlock } from "@/components/LessonWatchShell";
 
 type Submission = {
   id: string;
@@ -12,8 +12,14 @@ type Submission = {
   created_at: string;
 };
 
-export function LessonHomeworkSection({ lessonId }: { lessonId: string }) {
-  const router = useRouter();
+export function LessonHomeworkSection({
+  lessonId,
+  required = false,
+}: {
+  lessonId: string;
+  required?: boolean;
+}) {
+  const unlock = useLessonUnlock();
   const [submissions, setSubmissions] = useState<Submission[]>([]);
   const [loading, setLoading] = useState(true);
   const [submitLoading, setSubmitLoading] = useState(false);
@@ -32,6 +38,10 @@ export function LessonHomeworkSection({ lessonId }: { lessonId: string }) {
       .catch(() => setSubmissions([]))
       .finally(() => setLoading(false));
   }, [lessonId]);
+
+  function onSubmitSuccess() {
+    unlock?.notifyHomeworkSubmitted();
+  }
 
   async function handleSubmitLink(e: React.FormEvent) {
     e.preventDefault();
@@ -56,11 +66,11 @@ export function LessonHomeworkSection({ lessonId }: { lessonId: string }) {
       }
       setSuccess("تم تسليم الرابط بنجاح");
       setLinkUrl("");
-      router.refresh();
       setSubmissions((prev) => [
         { id: "", submission_type: "link", link_url: url, file_url: null, file_name: null, created_at: new Date().toISOString() },
         ...prev,
       ]);
+      onSubmitSuccess();
     } catch {
       setError("حدث خطأ");
     } finally {
@@ -116,11 +126,11 @@ export function LessonHomeworkSection({ lessonId }: { lessonId: string }) {
       setSuccess("تم تسليم الملف بنجاح");
       setFileUrl("");
       setFileName("");
-      router.refresh();
       setSubmissions((prev) => [
         { id: "", submission_type: mode, link_url: null, file_url: fileUrl, file_name: fileName || null, created_at: new Date().toISOString() },
         ...prev,
       ]);
+      onSubmitSuccess();
     } catch {
       setError("حدث خطأ");
     } finally {
@@ -134,7 +144,9 @@ export function LessonHomeworkSection({ lessonId }: { lessonId: string }) {
         إرسال الواجب
       </h2>
       <p className="mt-1 text-sm text-[var(--color-muted)]">
-        يمكنك إرسال رابط أو ملف PDF أو صورة كواجب لهذه الحصة.
+        {required
+          ? "تسليم الواجب مطلوب لفتح الحصة التالية. يمكنك إرسال رابط أو ملف PDF أو صورة."
+          : "يمكنك إرسال رابط أو ملف PDF أو صورة كواجب لهذه الحصة."}
       </p>
       {error && (
         <div className="mt-3 rounded-[var(--radius-btn)] bg-red-500/10 px-3 py-2 text-sm text-red-600 dark:text-red-400">

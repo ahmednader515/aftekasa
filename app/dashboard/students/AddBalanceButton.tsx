@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { useT } from "@/components/LocaleProvider";
+import { useT, useLocale } from "@/components/LocaleProvider";
 import { getDir } from "@/lib/i18n/core";
 
 export function AddBalanceButton({
@@ -15,7 +15,8 @@ export function AddBalanceButton({
   currentBalance: number;
 }) {
   const t = useT();
-  const dir = getDir();
+  const locale = useLocale();
+  const dir = getDir(locale);
   const [open, setOpen] = useState(false);
   const [amount, setAmount] = useState("");
   const [loading, setLoading] = useState(false);

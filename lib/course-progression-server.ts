@@ -9,6 +9,7 @@ import { QUIZ_PASS_PERCENT } from "./course-content";
 import { progressionRowToNavLink, type ProgressionNavLink } from "./course-progression-nav";
 import {
   getCompletedLessonIdsForCourse,
+  getLessonIdsWithHomeworkSubmittedForCourse,
   getQuizProgressSets,
 } from "./db";
 
@@ -21,6 +22,27 @@ export function shouldApplySequentialProgression(
   if (role && STAFF_ROLES.has(role)) return false;
   if (role !== "STUDENT") return false;
   return hasFullStudentAccess;
+}
+
+function lessonRequiresHomework(lesson: Record<string, unknown> | undefined): boolean {
+  if (!lesson) return false;
+  return Boolean(lesson.acceptsHomework ?? lesson.accepts_homework);
+}
+
+/** Video progress only counts as complete when homework is also submitted (if required). */
+export function filterCompletedLessonsForHomework(
+  watchedLessonIds: Set<string>,
+  homeworkLessonIds: Set<string>,
+  lessons: Record<string, unknown>[],
+): Set<string> {
+  const byId = new Map(lessons.map((l) => [String(l.id), l]));
+  const completed = new Set<string>();
+  for (const id of watchedLessonIds) {
+    const lesson = byId.get(id);
+    if (lessonRequiresHomework(lesson) && !homeworkLessonIds.has(id)) continue;
+    completed.add(id);
+  }
+  return completed;
 }
 
 export async function resolveCourseProgression(
@@ -45,10 +67,17 @@ export async function resolveCourseProgression(
   }
 
   const quizIds = quizzes.map((q) => String(q.id));
-  const [completedLessonIds, quizProgress] = await Promise.all([
+  const [watchedLessonIds, quizProgress, homeworkLessonIds] = await Promise.all([
     getCompletedLessonIdsForCourse(userId, courseId),
     getQuizProgressSets(userId, quizIds, QUIZ_PASS_PERCENT),
+    getLessonIdsWithHomeworkSubmittedForCourse(userId, courseId),
   ]);
+
+  const completedLessonIds = filterCompletedLessonsForHomework(
+    watchedLessonIds,
+    homeworkLessonIds,
+    lessons,
+  );
 
   return buildCourseProgressionState({
     lessons,

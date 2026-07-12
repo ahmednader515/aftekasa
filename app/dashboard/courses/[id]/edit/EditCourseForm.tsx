@@ -16,12 +16,23 @@ import {
   resolveParentQuizRefFromId,
 } from "../../course-quiz-form-types";
 import { QuestionImageField } from "../../QuestionImageField";
+import { LessonHomeworkAssignmentFields } from "../../LessonHomeworkAssignmentFields";
+import { parseHomeworkMaterials, type HomeworkMaterial } from "@/lib/homework-materials";
 
 export type { ContentOrderEntry };
 
 type CategoryOption = { id: string; name: string; nameAr?: string | null };
 type TeacherOption = { id: string; name: string | null; email: string | null };
-type LessonRow = { id?: string; title: string; videoUrl: string; content: string; pdfUrl: string; acceptsHomework: boolean };
+type LessonRow = {
+  id?: string;
+  title: string;
+  videoUrl: string;
+  content: string;
+  pdfUrl: string;
+  acceptsHomework: boolean;
+  homeworkMaterials: HomeworkMaterial[];
+  homeworkExplanationVideoUrl: string;
+};
 type QuestionOptionRow = { text: string; isCorrect: boolean };
 type QuestionRow = { type: "MULTIPLE_CHOICE" | "TRUE_FALSE"; questionText: string; imageUrl: string; options: QuestionOptionRow[] };
 
@@ -70,7 +81,15 @@ type InitialData = {
   contentOrder: ContentOrderEntry[];
 };
 
-const defaultLesson: LessonRow = { title: "", videoUrl: "", content: "", pdfUrl: "", acceptsHomework: false };
+const defaultLesson: LessonRow = {
+  title: "",
+  videoUrl: "",
+  content: "",
+  pdfUrl: "",
+  acceptsHomework: false,
+  homeworkMaterials: [],
+  homeworkExplanationVideoUrl: "",
+};
 const defaultQuiz: QuizRow = {
   title: "",
   timeLimitMinutes: "",
@@ -128,6 +147,12 @@ export function EditCourseForm({
             content: String(r.content ?? ""),
             pdfUrl: String(r.pdfUrl ?? r.pdf_url ?? ""),
             acceptsHomework: Boolean(r.acceptsHomework ?? r.accepts_homework ?? false),
+            homeworkMaterials: parseHomeworkMaterials(
+              r.homeworkMaterials ?? r.homework_materials,
+            ),
+            homeworkExplanationVideoUrl: String(
+              r.homeworkExplanationVideoUrl ?? r.homework_explanation_video_url ?? "",
+            ),
           };
         })
       : [defaultLesson]
@@ -248,7 +273,7 @@ export function EditCourseForm({
         .map((e) => (e.type === "lesson" && e.index > i ? { ...e, index: e.index - 1 } : e))
     );
   }
-  function updateLesson(i: number, field: keyof LessonRow, value: string | boolean) {
+  function updateLesson(i: number, field: keyof LessonRow, value: string | boolean | HomeworkMaterial[]) {
     setLessons((l) => l.map((x, idx) => (idx === i ? { ...x, [field]: value } : x)));
   }
 
@@ -483,15 +508,18 @@ export function EditCourseForm({
 
     const payload = {
       titleAr: form.titleAr.trim(),
+      titleEn: form.titleEn.trim(),
       descriptionAr: form.descriptionAr.trim(),
+      descriptionEn: form.descriptionEn.trim(),
       shortDescAr: form.shortDescAr.trim() || undefined,
+      shortDescEn: form.shortDescEn.trim() || undefined,
       imageUrl: form.imageUrl.trim() || undefined,
       price: form.price ? parseFloat(form.price) : 0,
       isPublished: form.isPublished,
       maxQuizAttempts: form.maxQuizAttempts.trim() ? parseInt(form.maxQuizAttempts, 10) : null,
       ...(isAdmin && teacherId.trim() ? { teacherId: teacherId.trim() } : {}),
-      ...(form.categoryNameAr.trim()
-        ? { categoryNameAr: form.categoryNameAr.trim() }
+      ...(form.categoryNameAr.trim() || form.categoryNameEn.trim()
+        ? { categoryNameAr: form.categoryNameAr.trim(), categoryNameEn: form.categoryNameEn.trim() }
         : form.categoryId ? { categoryId: form.categoryId } : { categoryId: null }),
       lessons: validLessons.map((l) => ({
         id: l.id?.trim() || undefined,
@@ -500,6 +528,8 @@ export function EditCourseForm({
         content: l.content.trim() || undefined,
         pdfUrl: l.pdfUrl.trim() || undefined,
         acceptsHomework: l.acceptsHomework,
+        homeworkMaterials: l.homeworkMaterials,
+        homeworkExplanationVideoUrl: l.homeworkExplanationVideoUrl.trim() || undefined,
       })),
       quizzes: validQuizzes,
       contentOrder: filteredContentOrder,
@@ -609,8 +639,8 @@ export function EditCourseForm({
             <label className="block text-sm font-medium text-[var(--color-foreground)]">{t(`${Cf}.categoryOptional`)}</label>
             <p className="mt-1 text-xs text-[var(--color-muted)]">{t(`${Cf}.categoryHelpChooseOrNew`)}</p>
             <select
-              value={form.categoryNameAr.trim() ? "" : form.categoryId}
-              onChange={(e) => setForm((f) => ({ ...f, categoryId: e.target.value, categoryNameAr: "" }))}
+              value={form.categoryNameAr.trim() || form.categoryNameEn.trim() ? "" : form.categoryId}
+              onChange={(e) => setForm((f) => ({ ...f, categoryId: e.target.value, categoryNameAr: "", categoryNameEn: "" }))}
               className="mt-1 w-full rounded-[var(--radius-btn)] border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2"
             >
               <option value="">{t(`${Cf}.noCategoryOption`)}</option>
@@ -621,12 +651,19 @@ export function EditCourseForm({
               ))}
             </select>
             <div className="mt-2">
-              <label className="block text-xs text-[var(--color-muted)]">{t(`${Cf}.newCategoryArabicPlaceholder`)}</label>
+              <label className="block text-xs text-[var(--color-muted)]">{t(`${Cf}.newCategoryBilingualHint`, "New category name (Arabic / English)")}</label>
               <input
                 type="text"
                 value={form.categoryNameAr}
                 onChange={(e) => setForm((f) => ({ ...f, categoryNameAr: e.target.value, categoryId: "" }))}
                 placeholder={t(`${Cf}.newCategoryArabicPlaceholder`)}
+                className="mt-1 w-full rounded-[var(--radius-btn)] border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2 text-sm"
+              />
+              <input
+                type="text"
+                value={form.categoryNameEn}
+                onChange={(e) => setForm((f) => ({ ...f, categoryNameEn: e.target.value, categoryId: "" }))}
+                placeholder={t(`${Cf}.newCategoryEnglishLabel`)}
                 className="mt-1 w-full rounded-[var(--radius-btn)] border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2 text-sm"
               />
             </div>
@@ -660,12 +697,24 @@ export function EditCourseForm({
             <input type="text" value={form.titleAr} onChange={(e) => setForm((f) => ({ ...f, titleAr: e.target.value }))} className="mt-1 w-full rounded-[var(--radius-btn)] border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2" required />
           </div>
           <div>
+            <label className="block text-sm font-medium text-[var(--color-foreground)]">{t(`${Cf}.titleEnRequired`)}</label>
+            <input type="text" value={form.titleEn} onChange={(e) => setForm((f) => ({ ...f, titleEn: e.target.value }))} className="mt-1 w-full rounded-[var(--radius-btn)] border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2" required />
+          </div>
+          <div>
             <label className="block text-sm font-medium text-[var(--color-foreground)]">{t(`${Cf}.shortDescAr`)}</label>
             <input type="text" maxLength={300} value={form.shortDescAr} onChange={(e) => setForm((f) => ({ ...f, shortDescAr: e.target.value }))} className="mt-1 w-full rounded-[var(--radius-btn)] border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2" />
           </div>
           <div>
+            <label className="block text-sm font-medium text-[var(--color-foreground)]">{t(`${Cf}.shortDescEn`)}</label>
+            <input type="text" maxLength={300} value={form.shortDescEn} onChange={(e) => setForm((f) => ({ ...f, shortDescEn: e.target.value }))} className="mt-1 w-full rounded-[var(--radius-btn)] border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2" />
+          </div>
+          <div>
             <label className="block text-sm font-medium text-[var(--color-foreground)]">{t(`${Cf}.fullDescArRequired`)}</label>
             <textarea value={form.descriptionAr} onChange={(e) => setForm((f) => ({ ...f, descriptionAr: e.target.value }))} rows={4} className="mt-1 w-full rounded-[var(--radius-btn)] border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2" required />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-[var(--color-foreground)]">{t(`${Cf}.fullDescEnRequired`)}</label>
+            <textarea value={form.descriptionEn} onChange={(e) => setForm((f) => ({ ...f, descriptionEn: e.target.value }))} rows={4} className="mt-1 w-full rounded-[var(--radius-btn)] border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2" required />
           </div>
           <label className="flex items-center gap-2">
             <input type="checkbox" checked={form.isPublished} onChange={(e) => setForm((f) => ({ ...f, isPublished: e.target.checked }))} />
@@ -723,10 +772,29 @@ export function EditCourseForm({
                 )}
               </div>
               <textarea value={lesson.content} onChange={(e) => updateLesson(i, "content", e.target.value)} placeholder={t(`${Cf}.notesPlaceholder`)} rows={2} className="w-full rounded-[var(--radius-btn)] border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm" />
-              <label className="flex items-center gap-2 pt-2">
-                <input type="checkbox" checked={lesson.acceptsHomework} onChange={(e) => updateLesson(i, "acceptsHomework", e.target.checked)} className="rounded border-[var(--color-border)]" />
-                <span className="text-sm text-[var(--color-foreground)]">{t(`${Cf}.homeworkCheckbox`)}</span>
-              </label>
+              <LessonHomeworkAssignmentFields
+                acceptsHomework={lesson.acceptsHomework}
+                materials={lesson.homeworkMaterials}
+                explanationVideoUrl={lesson.homeworkExplanationVideoUrl}
+                onAcceptsHomeworkChange={(v) => updateLesson(i, "acceptsHomework", v)}
+                onMaterialsChange={(m) => updateLesson(i, "homeworkMaterials", m)}
+                onExplanationVideoUrlChange={(v) => updateLesson(i, "homeworkExplanationVideoUrl", v)}
+                labels={{
+                  homeworkCheckbox: t(`${Cf}.homeworkCheckbox`),
+                  materialsLabel: t(`${Cf}.homeworkMaterialsLabel`, "Homework materials for students"),
+                  materialsHelp: t(`${Cf}.homeworkMaterialsHelp`, "Upload PDF or images the student should see for this homework."),
+                  uploadPdf: t(`${Cf}.homeworkUploadPdf`, "Upload homework PDF"),
+                  uploadImage: t(`${Cf}.homeworkUploadImage`, "Upload homework image"),
+                  uploading: t(`${Cf}.uploadingPdf`),
+                  remove: t(`${Cf}.remove`),
+                  explanationVideoLabel: t(`${Cf}.homeworkExplanationVideoLabel`, "Homework explanation video (YouTube)"),
+                  explanationVideoHelp: t(
+                    `${Cf}.homeworkExplanationVideoHelp`,
+                    "Shown to the student only after they submit the homework.",
+                  ),
+                  explanationVideoPlaceholder: t(`${Cf}.youtubePlaceholder`),
+                }}
+              />
             </div>
           </div>
         ))}

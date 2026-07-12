@@ -10,17 +10,19 @@ import {
   ensureUserCopyrightCode,
   getHomepageSettings,
   isLessonCompleteForUser,
+  hasHomeworkSubmissionForLesson,
 } from "@/lib/db";
-import { LessonVideoPlayer } from "@/components/LessonVideoPlayer";
+import { LessonWatchShell } from "@/components/LessonWatchShell";
 import { VideoCopyrightOverlay } from "@/components/video-copyright-overlay";
 import { getYouTubeVideoId } from "@/lib/youtube";
 import { CourseOutlineSidebar } from "@/components/CourseOutlineSidebar";
 import { LessonHomeworkSection } from "./LessonHomeworkSection";
 import { LessonRatingSection } from "./LessonRatingSection";
-import { LessonCompleteButton } from "@/components/LessonCompleteButton";
+import { LessonHomeworkMaterialsPanel } from "./LessonHomeworkMaterialsPanel";
+import { parseHomeworkMaterials } from "@/lib/homework-materials";
 import { resolveCourseProgression, shouldApplySequentialProgression } from "@/lib/course-progression-server";
 import { findProgressionRowForLesson } from "@/lib/course-progression";
-import { getServerTranslator } from "@/lib/i18n/server";
+import { getLocaleFromCookie, getServerTranslator } from "@/lib/i18n/server";
 import { pickLocalizedText } from "@/lib/i18n/localized-field";
 import { isCourseSegmentId } from "@/lib/legacy-schema";
 import { prepareLessonContentForDisplay } from "@/lib/lesson-content";
@@ -66,7 +68,7 @@ type NavItem =
   | { type: "quiz"; id: string; locked: boolean };
 
 export default async function LessonPage({ params }: Props) {
-  const t = await getServerTranslator();
+  const [t, locale] = await Promise.all([getServerTranslator(), getLocaleFromCookie()]);
   const { slug: courseSegment, lessonSlug: lessonSegment } = await params;
   const courseDecoded = decodeSegment(courseSegment);
   const lessonDecoded = decodeSegment(lessonSegment);
@@ -114,7 +116,7 @@ export default async function LessonPage({ params }: Props) {
         ? String(course.title_ar)
         : null;
   const courseEn = course.title != null ? String(course.title) : null;
-  const courseTitle = pickLocalizedText(null, courseAr, courseEn) || courseEn || courseAr || "";
+  const courseTitle = pickLocalizedText(locale, courseAr, courseEn) || courseEn || courseAr || "";
 
   const lessonDenied =
     !isStaff &&
@@ -165,7 +167,7 @@ export default async function LessonPage({ params }: Props) {
         ? String(lessonObj.title_ar)
         : null;
   const lessonEn = lessonObj.title != null ? String(lessonObj.title) : null;
-  const lessonTitle = pickLocalizedText(null, lessonAr, lessonEn) || lessonEn || lessonAr || "";
+  const lessonTitle = pickLocalizedText(locale, lessonAr, lessonEn) || lessonEn || lessonAr || "";
 
   let studentCopyrightCode: string | null = null;
   if (session?.user?.role === "STUDENT" && session.user.id) {
@@ -193,11 +195,30 @@ export default async function LessonPage({ params }: Props) {
   const nextItem =
     currentIndex >= 0 && currentIndex < navItems.length - 1 ? navItems[currentIndex + 1] : null;
 
+  const homeworkRequired = Boolean(lessonObj.acceptsHomework ?? lessonObj.accepts_homework);
+  const videoComplete =
+    session?.user?.id && isStudent
+      ? await isLessonCompleteForUser(session.user.id, lessonId, course.id)
+      : false;
+  const homeworkSubmitted =
+    session?.user?.id && isStudent && homeworkRequired
+      ? await hasHomeworkSubmissionForLesson(session.user.id, lessonId)
+      : !homeworkRequired;
   const lessonCompleted =
     session?.user?.id && isStudent
-      ? progressionRow?.completed ?? (await isLessonCompleteForUser(session.user.id, lessonId, course.id))
+      ? (progressionRow?.completed ?? (videoComplete && homeworkSubmitted))
       : false;
-  const canMarkComplete = isStudent && hasFullStudentAccess && !lessonCompleted;
+  const canAutoComplete = isStudent && hasFullStudentAccess && !videoComplete;
+  const nextHref = nextItem
+    ? nextItem.type === "lesson"
+      ? lessonHref(course, { id: nextItem.id, slug: nextItem.slug ?? undefined })
+      : quizHref(course, nextItem.id)
+    : null;
+  const nextLabel = nextItem
+    ? nextItem.type === "lesson"
+      ? t("courses.nextLesson", "Next lesson")
+      : t("courses.nextQuiz", "Next quiz")
+    : null;
 
   const lessonContent = lessonObj.content
     ? prepareLessonContentForDisplay(String(lessonObj.content))
@@ -216,67 +237,77 @@ export default async function LessonPage({ params }: Props) {
         <article className="min-w-0 lg:col-start-1 lg:row-start-1">
           <h1 className="text-2xl font-bold text-[var(--color-foreground)]">{lessonTitle}</h1>
 
-          {youtubeVideoId && (
-            <div className="mt-6">
-              <LessonVideoPlayer
-                youtubeVideoId={youtubeVideoId}
-                storageKey={String(lessonObj.id)}
-                className="w-full"
-                lessonId={lessonId}
-                courseId={course.id}
-                markCompleteOnEnd={canMarkComplete}
-                copyrightOverlay={
-                  studentCopyrightCode?.trim() ? (
-                    <VideoCopyrightOverlay
-                      code={studentCopyrightCode.trim()}
-                      label={t("video.copyrightCode", "Copyright code")}
-                      dir="rtl"
-                      style={copyrightOverlayStyle}
-                    />
-                  ) : undefined
+          <LessonWatchShell
+            youtubeVideoId={youtubeVideoId}
+            storageKey={String(lessonObj.id)}
+            className="w-full"
+            lessonId={lessonId}
+            courseId={course.id}
+            canAutoComplete={canAutoComplete}
+            initialVideoComplete={videoComplete}
+            homeworkRequired={homeworkRequired && isStudent && hasFullStudentAccess}
+            initialHomeworkSubmitted={homeworkSubmitted}
+            nextHref={isStudent && hasFullStudentAccess ? nextHref : null}
+            nextLabel={isStudent && hasFullStudentAccess ? nextLabel : null}
+            copyrightOverlay={
+              studentCopyrightCode?.trim() ? (
+                <VideoCopyrightOverlay
+                  code={studentCopyrightCode.trim()}
+                  label={t("video.copyrightCode", "Copyright code")}
+                  dir="rtl"
+                  style={copyrightOverlayStyle}
+                />
+              ) : undefined
+            }
+          >
+            {(lessonObj.pdfUrl ?? lessonObj.pdf_url) ? (
+              <div className="mt-6">
+                <a
+                  href={String(lessonObj.pdfUrl ?? lessonObj.pdf_url)}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-2 rounded-[var(--radius-btn)] bg-[var(--color-primary)] px-4 py-2 text-sm font-medium text-white hover:bg-[var(--color-primary-hover)]"
+                >
+                  📄 {t("courses.downloadPdf", "Download / View PDF")}
+                </a>
+              </div>
+            ) : null}
+
+            {lessonContent?.value ? (
+              <div className="mt-6 rounded-[var(--radius-card)] border border-[var(--color-border)] bg-[var(--color-surface)] p-6 prose-custom text-[var(--color-foreground)]">
+                {lessonContent.mode === "html" ? (
+                  <div dangerouslySetInnerHTML={{ __html: lessonContent.value }} />
+                ) : (
+                  lessonContent.value.split("\n").map((paragraph, i) =>
+                    paragraph.trim() ? <p key={i}>{paragraph}</p> : null,
+                  )
+                )}
+              </div>
+            ) : null}
+
+            {homeworkRequired ? (
+              <LessonHomeworkMaterialsPanel
+                materials={parseHomeworkMaterials(
+                  lessonObj.homeworkMaterials ?? lessonObj.homework_materials,
+                )}
+                explanationVideoUrl={
+                  String(
+                    lessonObj.homeworkExplanationVideoUrl ??
+                      lessonObj.homework_explanation_video_url ??
+                      "",
+                  ).trim() || null
                 }
+                initialHomeworkSubmitted={homeworkSubmitted}
+                forceShowExplanation={!isStudent}
               />
-            </div>
-          )}
+            ) : null}
 
-          {(lessonObj.pdfUrl ?? lessonObj.pdf_url) ? (
-            <div className="mt-6">
-              <a
-                href={String(lessonObj.pdfUrl ?? lessonObj.pdf_url)}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center gap-2 rounded-[var(--radius-btn)] bg-[var(--color-primary)] px-4 py-2 text-sm font-medium text-white hover:bg-[var(--color-primary-hover)]"
-              >
-                📄 {t("courses.downloadPdf", "Download / View PDF")}
-              </a>
-            </div>
-          ) : null}
+            {homeworkRequired && (
+              <LessonHomeworkSection lessonId={String(lessonObj.id)} required={isStudent && hasFullStudentAccess} />
+            )}
 
-          {lessonContent?.value ? (
-            <div className="mt-6 rounded-[var(--radius-card)] border border-[var(--color-border)] bg-[var(--color-surface)] p-6 prose-custom text-[var(--color-foreground)]">
-              {lessonContent.mode === "html" ? (
-                <div dangerouslySetInnerHTML={{ __html: lessonContent.value }} />
-              ) : (
-                lessonContent.value.split("\n").map((paragraph, i) =>
-                  paragraph.trim() ? <p key={i}>{paragraph}</p> : null,
-                )
-              )}
-            </div>
-          ) : null}
-
-          {Boolean(lessonObj.acceptsHomework ?? lessonObj.accepts_homework) && (
-            <LessonHomeworkSection lessonId={String(lessonObj.id)} />
-          )}
-
-          {isStudent ? <LessonRatingSection lessonId={String(lessonObj.id)} /> : null}
-
-          {isStudent && hasFullStudentAccess ? (
-            <LessonCompleteButton
-              lessonId={lessonId}
-              courseId={course.id}
-              initialCompleted={lessonCompleted}
-            />
-          ) : null}
+            {isStudent ? <LessonRatingSection lessonId={String(lessonObj.id)} /> : null}
+          </LessonWatchShell>
 
           {/* أزرار السابق والتالي أسفل الحصة */}
           <nav className="mt-8 flex w-full items-center justify-between gap-4 border-t border-[var(--color-border)] pt-6">
@@ -292,7 +323,7 @@ export default async function LessonPage({ params }: Props) {
             ) : (
               <span />
             )}
-            {nextItem && !nextItem.locked ? (
+            {(lessonCompleted || !isStudent) && nextItem && !nextItem.locked ? (
               <Link
                 href={nextItem.type === "lesson" ? lessonHref(course, { id: nextItem.id, slug: nextItem.slug ?? undefined }) : quizHref(course, nextItem.id)}
                 className="rounded-[var(--radius-btn)] bg-[var(--color-primary)] px-4 py-3 text-sm font-medium text-white transition hover:bg-[var(--color-primary-hover)]"

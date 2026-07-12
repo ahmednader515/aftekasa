@@ -2,12 +2,13 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { useT } from "@/components/LocaleProvider";
+import { useT, useLocale } from "@/components/LocaleProvider";
 import { getDir } from "@/lib/i18n/core";
 
 export function ActivateCodeSection() {
   const t = useT();
-  const dir = getDir();
+  const locale = useLocale();
+  const dir = getDir(locale);
   const router = useRouter();
   const [code, setCode] = useState("");
   const [loading, setLoading] = useState(false);

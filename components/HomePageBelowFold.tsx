@@ -20,7 +20,7 @@ import { HomePlatformDetailsSection } from "@/components/HomePlatformDetailsSect
 import { parsePlatformDetailsItems } from "@/lib/platform-details";
 import { parsePlatformNewsItems } from "@/lib/platform-news";
 import { HomePlatformNewsSlider } from "@/components/HomePlatformNewsSlider";
-import { getServerTranslator } from "@/lib/i18n/server";
+import { getLocaleFromCookie, getServerTranslator } from "@/lib/i18n/server";
 import {
   HOMEPAGE_DEFAULT_CTA_BADGE_AR,
   HOMEPAGE_DEFAULT_CTA_BUTTON_AR,
@@ -36,7 +36,8 @@ import {
   HOMEPAGE_DEFAULT_STORE_SECTION_DESCRIPTION_AR,
   HOMEPAGE_DEFAULT_STORE_SECTION_TITLE_AR,
 } from "@/lib/homepage-known-defaults";
-import { pickLocalizedText, settingTextOrDefault } from "@/lib/i18n/localized-field";
+import { homepageDefaultForLocale } from "@/lib/homepage-default-for-locale";
+import { pickLocalizedText } from "@/lib/i18n/localized-field";
 import { selectTeachersForHomepagePreview } from "@/lib/db";
 import { courseIsHiddenFromPublicTeacherCatalog } from "@/lib/permissions";
 
@@ -49,7 +50,7 @@ export async function HomePageBelowFold({
   homepageSettings: HomepageSetting;
   session: Session | null;
 }) {
-  const t = await getServerTranslator();
+  const [t, locale] = await Promise.all([getServerTranslator(), getLocaleFromCookie()]);
   let courses: CourseWithCategory[] = [];
   let categories: Awaited<ReturnType<typeof getCategoriesCached>> = [];
   let reviews: Awaited<ReturnType<typeof getReviewsCached>> = [];
@@ -119,7 +120,7 @@ export async function HomePageBelowFold({
   const platformNewsSlides = parsePlatformNewsItems(homepageSettings.platformNewsItems);
   const localizedPlatformNewsSlides = platformNewsSlides.map((item) => ({
     ...item,
-    description: pickLocalizedText(null, item.description, item.descriptionEn),
+    description: pickLocalizedText(locale, item.description, item.descriptionEn),
   }));
   const showPlatformNewsSection =
     Boolean(homepageSettings.platformNewsEnabled) && localizedPlatformNewsSlides.length > 0;
@@ -149,7 +150,7 @@ export async function HomePageBelowFold({
     const list = categoryIdToCourses.get(cat.id);
     if (list?.length) {
       sections.push({
-        title: pickLocalizedText(null, (cat as { nameAr?: string | null }).nameAr, cat.name),
+        title: pickLocalizedText(locale, (cat as { nameAr?: string | null }).nameAr, cat.name),
         slug: cat.slug,
         courses: list,
       });
@@ -162,97 +163,121 @@ export async function HomePageBelowFold({
   const platformDetailsItems = parsePlatformDetailsItems(homepageSettings.platformDetailsItems);
   const localizedPlatformDetailsItems = platformDetailsItems.map((item) => ({
     ...item,
-    title: pickLocalizedText(null, item.title, item.titleEn),
-    description: pickLocalizedText(null, item.description, item.descriptionEn),
+    title: pickLocalizedText(locale, item.title, item.titleEn),
+    description: pickLocalizedText(locale, item.description, item.descriptionEn),
   }));
 
-  const rawReviewsTitle = pickLocalizedText(null,
+  const rawReviewsTitle = pickLocalizedText(locale,
     homepageSettings.reviewsSectionTitle,
     homepageSettings.reviewsSectionTitleEn,
   );
-  const rawReviewsSubtitle = pickLocalizedText(null,
+  const rawReviewsSubtitle = pickLocalizedText(locale,
     homepageSettings.reviewsSectionSubtitle,
     homepageSettings.reviewsSectionSubtitleEn,
   );
   const reviewsTitle =
-    rawReviewsTitle || t("home.reviewsTitleDefault", "What students say");
+    locale === "en" &&
+    (rawReviewsTitle === HOMEPAGE_DEFAULT_REVIEWS_SECTION_TITLE_AR || rawReviewsTitle === "")
+      ? t("home.reviewsTitleDefault", "What students say")
+      : rawReviewsTitle || t("home.reviewsTitleDefault", "What students say");
   const reviewsSubtitle =
-    rawReviewsSubtitle || t("home.reviewsSubtitleDefault", "Real experiences from platform students");
+    locale === "en" &&
+    (rawReviewsSubtitle === HOMEPAGE_DEFAULT_REVIEWS_SECTION_SUBTITLE_AR || rawReviewsSubtitle === "")
+      ? t("home.reviewsSubtitleDefault", "Real experiences from platform students")
+      : rawReviewsSubtitle || t("home.reviewsSubtitleDefault", "Real experiences from platform students");
 
-  const rawCtaBadge = pickLocalizedText(null,
+  const rawCtaBadge = pickLocalizedText(locale,
     homepageSettings.ctaBadgeText,
     homepageSettings.ctaBadgeTextEn,
   );
-  const rawCtaTitle = pickLocalizedText(null, homepageSettings.ctaTitle, homepageSettings.ctaTitleEn);
-  const rawCtaDescription = pickLocalizedText(null,
+  const rawCtaTitle = pickLocalizedText(locale, homepageSettings.ctaTitle, homepageSettings.ctaTitleEn);
+  const rawCtaDescription = pickLocalizedText(locale,
     homepageSettings.ctaDescription,
     homepageSettings.ctaDescriptionEn,
   );
-  const rawCtaButton = pickLocalizedText(null,
+  const rawCtaButton = pickLocalizedText(locale,
     homepageSettings.ctaButtonText,
     homepageSettings.ctaButtonTextEn,
   );
-  const platformDetailsTitle = settingTextOrDefault(
-    pickLocalizedText(null, homepageSettings.platformDetailsTitle, homepageSettings.platformDetailsTitleEn),
-    t,
-    "home.platformDetailsDefaultTitle",
+  const platformDetailsTitle = homepageDefaultForLocale(
+    locale,
+    pickLocalizedText(locale, homepageSettings.platformDetailsTitle, homepageSettings.platformDetailsTitleEn),
     HOMEPAGE_DEFAULT_PLATFORM_DETAILS_TITLE_AR,
-  );
-  const platformDetailsSubtitle = settingTextOrDefault(
-    pickLocalizedText(null, homepageSettings.platformDetailsSubtitle, homepageSettings.platformDetailsSubtitleEn),
+    "home.platformDetailsDefaultTitle",
     t,
-    "home.platformDetailsDefaultSubtitle",
+    "Qalam, the ideal solution!",
+  );
+  const platformDetailsSubtitle = homepageDefaultForLocale(
+    locale,
+    pickLocalizedText(locale, homepageSettings.platformDetailsSubtitle, homepageSettings.platformDetailsSubtitleEn),
     HOMEPAGE_DEFAULT_PLATFORM_DETAILS_SUBTITLE_AR,
-  );
-  const storeSectionTitle = settingTextOrDefault(
-    pickLocalizedText(null, homepageSettings.storeSectionTitle, homepageSettings.storeSectionTitleEn),
+    "home.platformDetailsDefaultSubtitle",
     t,
-    "home.storeSectionDefaultTitle",
-    HOMEPAGE_DEFAULT_STORE_SECTION_TITLE_AR,
+    "Discover what makes the platform stand out",
   );
-  const storeSectionDescription = settingTextOrDefault(
+  const storeSectionTitle = homepageDefaultForLocale(
+    locale,
+    pickLocalizedText(locale, homepageSettings.storeSectionTitle, homepageSettings.storeSectionTitleEn),
+    HOMEPAGE_DEFAULT_STORE_SECTION_TITLE_AR,
+    "home.storeSectionDefaultTitle",
+    t,
+    "Platform Store",
+  );
+  const storeSectionDescription = homepageDefaultForLocale(
+    locale,
     pickLocalizedText(
-      null,
+      locale,
       homepageSettings.storeSectionDescription,
       homepageSettings.storeSectionDescriptionEn,
     ),
-    t,
-    "home.storeSectionDefaultDescription",
     HOMEPAGE_DEFAULT_STORE_SECTION_DESCRIPTION_AR,
+    "home.storeSectionDefaultDescription",
+    t,
+    "Welcome to the platform store with essential study materials and books. Choose what suits your needs and benefit from organized digital content that supports your learning journey.",
   );
-  const platformNewsTitle = settingTextOrDefault(
+  const platformNewsTitle = homepageDefaultForLocale(
+    locale,
     pickLocalizedText(
-      null,
+      locale,
       homepageSettings.platformNewsSectionTitle,
       homepageSettings.platformNewsSectionTitleEn,
     ),
-    t,
-    "home.platformNewsDefaultTitle",
     HOMEPAGE_DEFAULT_PLATFORM_NEWS_TITLE_AR,
+    "home.platformNewsDefaultTitle",
+    t,
+    "Platform News",
   );
-  const ctaBadge = settingTextOrDefault(
+  const ctaBadge = homepageDefaultForLocale(
+    locale,
     rawCtaBadge,
-    t,
-    "home.ctaBadgeDefault",
     HOMEPAGE_DEFAULT_CTA_BADGE_AR,
+    "home.ctaBadgeDefault",
+    t,
+    "A stronger start to learning",
   );
-  const ctaTitle = settingTextOrDefault(
+  const ctaTitle = homepageDefaultForLocale(
+    locale,
     rawCtaTitle,
-    t,
-    "home.ctaTitleDefault",
     HOMEPAGE_DEFAULT_CTA_TITLE_AR,
+    "home.ctaTitleDefault",
+    t,
+    "Ready to turn your dream into a real result?",
   );
-  const ctaDescription = settingTextOrDefault(
+  const ctaDescription = homepageDefaultForLocale(
+    locale,
     rawCtaDescription,
-    t,
-    "home.ctaDescriptionDefault",
     HOMEPAGE_DEFAULT_CTA_DESCRIPTION_AR,
-  );
-  const ctaButton = settingTextOrDefault(
-    rawCtaButton,
+    "home.ctaDescriptionDefault",
     t,
-    "home.ctaButtonDefault",
+    "Start now with a confident step: organized content, clear explanations, and practical exercises that help you retain what you learn faster. Every lesson you complete today brings you closer to the level you deserve tomorrow.",
+  );
+  const ctaButton = homepageDefaultForLocale(
+    locale,
+    rawCtaButton,
     HOMEPAGE_DEFAULT_CTA_BUTTON_AR,
+    "home.ctaButtonDefault",
+    t,
+    "Start your journey now",
   );
 
   return (
@@ -343,8 +368,8 @@ export async function HomePageBelowFold({
               {reviews.map((r) => {
                 const letter =
                   (r.avatarLetter && r.avatarLetter.trim()) || (r.authorName.trim()[0] ?? "؟");
-                const reviewText = pickLocalizedText(null, r.text, r.textEn);
-                const reviewAuthorTitle = pickLocalizedText(null, r.authorTitle, r.authorTitleEn);
+                const reviewText = pickLocalizedText(locale, r.text, r.textEn);
+                const reviewAuthorTitle = pickLocalizedText(locale, r.authorTitle, r.authorTitleEn);
                 return (
                   <div
                     key={r.id}
@@ -465,17 +490,21 @@ export async function HomePageBelowFold({
           "pointer-events-none hidden select-none rounded-full bg-black/50 px-3 py-1 text-xs font-semibold tracking-wide text-white/95 shadow-sm md:inline-flex md:translate-x-0 md:opacity-100 group-hover:inline-flex group-hover:opacity-100 group-focus-visible:inline-flex";
 
         const verticalPositions = ["bottom-6", "bottom-24", "bottom-42", "bottom-60", "bottom-78"] as const;
-        const rightLabelWord = settingTextOrDefault(
-          pickLocalizedText(null, homepageSettings.socialRightLabel, homepageSettings.socialRightLabelEn),
-          t,
-          "home.socialRightDefaultLabel",
+        const rightLabelWord = homepageDefaultForLocale(
+          locale,
+          pickLocalizedText(locale, homepageSettings.socialRightLabel, homepageSettings.socialRightLabelEn),
           HOMEPAGE_DEFAULT_SOCIAL_RIGHT_LABEL_AR,
-        );
-        const leftLabelWord = settingTextOrDefault(
-          pickLocalizedText(null, homepageSettings.socialLeftLabel, homepageSettings.socialLeftLabelEn),
+          "home.socialRightDefaultLabel",
           t,
-          "home.socialLeftDefaultLabel",
+          "Support",
+        );
+        const leftLabelWord = homepageDefaultForLocale(
+          locale,
+          pickLocalizedText(locale, homepageSettings.socialLeftLabel, homepageSettings.socialLeftLabelEn),
           HOMEPAGE_DEFAULT_SOCIAL_LEFT_LABEL_AR,
+          "home.socialLeftDefaultLabel",
+          t,
+          "Team support",
         );
         const leftEnabled = homepageSettings.socialLeftEnabled !== false;
 

@@ -13,14 +13,14 @@ import {
   HomePageBelowFoldFallback,
 } from "@/components/HomePageBelowFold";
 import { resolveHeroBgGradient } from "@/lib/hero-bg";
-import { getServerTranslator } from "@/lib/i18n/server";
+import { getLocaleFromCookie, getServerTranslator } from "@/lib/i18n/server";
 import { pickLocalizedText } from "@/lib/i18n/localized-field";
 
 /** ISR: الكتالوج يُحدَّث تلقائياً؛ التغييرات من لوحة التحكم تُبطَل فوراً عبر revalidateTag */
 export const revalidate = 60;
 
 export default async function HomePage() {
-  const t = await getServerTranslator();
+  const [t, locale] = await Promise.all([getServerTranslator(), getLocaleFromCookie()]);
 
   const [session, homepageSettings] = await Promise.all([
     getServerSession(authOptions),
@@ -68,7 +68,7 @@ export default async function HomePage() {
     typeof homepageSettings.heroSliderIntervalMs === "number"
       ? homepageSettings.heroSliderIntervalMs
       : 5000;
-  const heroTextAlignClass = "text-right";
+  const heroTextAlignClass = locale === "en" ? "text-left" : "text-right";
 
   if (heroTemplate === "image_slider" && heroSliderSlides[0]?.src) {
     preload(heroSliderSlides[0].src, { as: "image" });
@@ -88,8 +88,8 @@ export default async function HomePage() {
         </section>
       ) : heroTemplate === "coming_soon" ? (
         <HomeHeroTemplateThree
-          title={pickLocalizedText(null, homepageSettings.hero3Title, homepageSettings.hero3TitleEn) || t("home.defaultHero3Title", "The #1 all-in-one platform")}
-          subtitle={pickLocalizedText(null, homepageSettings.hero3Subtitle, homepageSettings.hero3SubtitleEn) || t("home.defaultHero3Subtitle", "Join over one million students with our plan")}
+          title={pickLocalizedText(locale, homepageSettings.hero3Title, homepageSettings.hero3TitleEn) || t("home.defaultHero3Title", "The #1 all-in-one platform")}
+          subtitle={pickLocalizedText(locale, homepageSettings.hero3Subtitle, homepageSettings.hero3SubtitleEn) || t("home.defaultHero3Subtitle", "Join over one million students with our plan")}
           phoneImageUrl={homepageSettings.hero3PhoneImageUrl?.trim() || null}
           phoneBgColor={homepageSettings.hero3PhoneBgColor?.trim() || "#FACC15"}
           badge1ImageUrl={homepageSettings.hero3StoreBadge1ImageUrl?.trim() || null}
@@ -146,10 +146,10 @@ export default async function HomePage() {
             <div className="flex flex-col items-center gap-12 lg:flex-row lg:items-center lg:justify-between lg:gap-44 xl:gap-52">
               <div className={`flex-1 ${heroTextAlignClass} order-2 lg:order-1 lg:max-w-2xl`}>
                 <h1 className="text-5xl font-bold leading-tight text-white sm:text-6xl lg:text-7xl">
-                  {pickLocalizedText(null, homepageSettings.heroTitle, homepageSettings.heroTitleEn) || t("home.defaultHeroTitle", "Mr. Essam Mohy")}
+                  {pickLocalizedText(locale, homepageSettings.heroTitle, homepageSettings.heroTitleEn) || t("home.defaultHeroTitle", "Mr. Essam Mohy")}
                 </h1>
                 <p className="mt-6 text-2xl font-medium text-sky-200/90 sm:text-3xl">
-                  {pickLocalizedText(null, homepageSettings.heroSlogan, homepageSettings.heroSloganEn) || t("home.defaultHeroSlogan", "Study it... and finally understand it right!")}
+                  {pickLocalizedText(locale, homepageSettings.heroSlogan, homepageSettings.heroSloganEn) || t("home.defaultHeroSlogan", "Study it... and finally understand it right!")}
                 </p>
               </div>
               <div className="flex-shrink-0 order-1 lg:order-2 lg:ml-6">
@@ -158,7 +158,7 @@ export default async function HomePage() {
                     <div className="relative h-full w-full">
                       <Image
                         src={homepageSettings.teacherImageUrl || "/instructor.png"}
-                        alt={pickLocalizedText(null, homepageSettings.heroTitle, homepageSettings.heroTitleEn) || t("home.defaultHeroTitle", "Mr. Essam Mohy")}
+                        alt={pickLocalizedText(locale, homepageSettings.heroTitle, homepageSettings.heroTitleEn) || t("home.defaultHeroTitle", "Mr. Essam Mohy")}
                         fill
                         sizes="(max-width: 640px) 15rem, (max-width: 1024px) 18rem, 20rem"
                         priority
