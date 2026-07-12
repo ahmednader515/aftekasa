@@ -39,8 +39,8 @@ type Props = {
   titleSuffix?: string;
 };
 
-function formatDate(d: Date | string) {
-  return new Intl.DateTimeFormat(dateLocaleForUi(), {
+function formatDate(d: Date | string, locale: string) {
+  return new Intl.DateTimeFormat(locale, {
     dateStyle: "short",
     timeStyle: "short",
   }).format(typeof d === "string" ? new Date(d) : d);
@@ -56,7 +56,8 @@ export default function StatisticsContent({
   titleSuffix = "",
 }: Props) {
   const t = useT();
-  const { dir, thClassCompact } = useDashboardTable();
+  const { locale, dir, thClassCompact } = useDashboardTable();
+  const dateLocale = dateLocaleForUi(locale);
   const [searchQuery, setSearchQuery] = useState("");
   const egp = t("common.egyptianPoundShort", "EGP");
 
@@ -174,7 +175,7 @@ export default function StatisticsContent({
                     <td className="px-3 py-2 text-[var(--color-foreground)]">
                       {a.score} / {a.totalQuestions}
                     </td>
-                    <td className="px-3 py-2 text-[var(--color-muted)]">{formatDate(a.createdAt)}</td>
+                    <td className="px-3 py-2 text-[var(--color-muted)]">{formatDate(a.createdAt, dateLocale)}</td>
                   </tr>
                 ))}
               </tbody>

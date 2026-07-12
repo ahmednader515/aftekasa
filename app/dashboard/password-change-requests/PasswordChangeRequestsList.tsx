@@ -58,7 +58,7 @@ export function PasswordChangeRequestsList({
 }) {
   const t = useT();
   const { locale, dir, thClassCompact } = useDashboardTable();
-  const dateLocale = dateLocaleForUi();
+  const dateLocale = dateLocaleForUi(locale);
   const router = useRouter();
   const [searchQuery, setSearchQuery] = useState("");
   const [requests, setRequests] = useState<RequestRow[]>(initialRequests);

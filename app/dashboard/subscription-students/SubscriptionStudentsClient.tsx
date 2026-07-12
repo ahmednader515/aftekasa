@@ -44,9 +44,9 @@ export function SubscriptionStudentsClient({
   const router = useRouter();
   const t = useT();
   const Sc = "dashboard.subscriptionStudentsClient";
-  const { dir, thClass } = useDashboardTable();
+  const { locale, dir, thClass } = useDashboardTable();
   const egp = t("common.egyptianPoundShort");
-  const dateLoc = dateLocaleForUi();
+  const dateLoc = dateLocaleForUi(locale);
   const [rows, setRows] = useState(initialRows);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");

@@ -5,6 +5,7 @@ import { authOptions } from "@/lib/auth";
 import { getAssignableTeachers, getCourseForEdit } from "@/lib/db";
 import { canManageCourse, readCourseManageIds } from "@/lib/permissions";
 import { EditCourseForm, type ContentOrderEntry } from "./EditCourseForm";
+import { parseHomeworkMaterials } from "@/lib/homework-materials";
 
 type Props = { params: Promise<{ id: string }> };
 
@@ -99,7 +100,7 @@ export default async function EditCoursePage({ params }: Props) {
         content: String(row.content ?? ""),
         pdfUrl: String(row.pdfUrl ?? row.pdf_url ?? ""),
         acceptsHomework: Boolean(row.acceptsHomework ?? row.accepts_homework ?? false),
-        homeworkMaterials: row.homeworkMaterials ?? row.homework_materials ?? [],
+        homeworkMaterials: parseHomeworkMaterials(row.homeworkMaterials ?? row.homework_materials),
         homeworkExplanationVideoUrl: String(
           row.homeworkExplanationVideoUrl ?? row.homework_explanation_video_url ?? "",
         ),

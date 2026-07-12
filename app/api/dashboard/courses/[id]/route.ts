@@ -179,7 +179,10 @@ export async function PUT(
   await syncCourseLessons({
     courseId: id,
     courseSlug: slug,
-    lessons,
+    lessons: lessons.map((le) => ({
+      ...le,
+      homeworkMaterials: parseHomeworkMaterials(le.homeworkMaterials),
+    })),
     contentOrder,
   });
 

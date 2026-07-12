@@ -24,7 +24,7 @@ export function CodesManage({ courseOptions }: { courseOptions: { id: string; ti
   const t = useT();
   const M = "dashboard.codesManage";
   const { locale, dir, thClassCompact } = useDashboardTable();
-  const dateLocale = dateLocaleForUi();
+  const dateLocale = dateLocaleForUi(locale);
   const [codes, setCodes] = useState<CodeRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
