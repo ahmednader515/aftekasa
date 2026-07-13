@@ -13,7 +13,10 @@ import {
   buildParentQuizOptions,
   parentRefFromKey,
   parentRefKey,
+  questionHasContent,
+  quizIsBlank,
   resolveParentQuizRefFromId,
+  validateCourseFormContent,
 } from "../../course-quiz-form-types";
 import { QuestionImageField } from "../../QuestionImageField";
 import { LessonHomeworkAssignmentFields } from "../../LessonHomeworkAssignmentFields";
@@ -451,16 +454,40 @@ export function EditCourseForm({
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError("");
-    if (isAdmin && !teacherId.trim()) {
-      setError(t(`${Cf}.assignTeacherRequired`, "Please select a teacher for this course."));
+    const validationError = validateCourseFormContent({
+      titleAr: form.titleAr,
+      titleEn: form.titleEn,
+      descriptionAr: form.descriptionAr,
+      descriptionEn: form.descriptionEn,
+      requireTeacher: isAdmin,
+      teacherId,
+      lessons,
+      quizzes,
+      messages: {
+        titleArRequired: t(`${Cf}.validationTitleAr`, "Arabic course title is required."),
+        titleEnRequired: t(`${Cf}.validationTitleEn`, "English course title is required."),
+        descriptionArRequired: t(`${Cf}.validationDescriptionAr`, "Arabic full description is required."),
+        descriptionEnRequired: t(`${Cf}.validationDescriptionEn`, "English full description is required."),
+        teacherRequired: t(`${Cf}.assignTeacherRequired`, "Please select a teacher for this course."),
+        lessonTitleRequired: t(`${Cf}.validationLessonTitle`, "Lesson {n}: title is required."),
+        quizTitleRequired: t(`${Cf}.validationQuizTitle`, "Quiz {n}: title is required."),
+        quizNeedsQuestion: t(`${Cf}.validationQuizNeedsQuestion`, "Quiz {n}: add at least one complete question."),
+        remedialParentRequired: t(`${Cf}.validationRemedialParent`, "Quiz {n}: choose a parent quiz for remedial type."),
+        questionNeedsPrompt: t(`${Cf}.validationQuestionPrompt`, "Quiz {quiz}, question {q}: add question text or an image."),
+        mcqOptionsRequired: t(`${Cf}.validationMcqOptions`, "Quiz {quiz}, question {q}: add at least two options."),
+        correctAnswerRequired: t(`${Cf}.validationCorrectAnswer`, "Quiz {quiz}, question {q}: mark the correct answer."),
+        tfOptionsRequired: t(`${Cf}.validationTfOptions`, "Quiz {quiz}, question {q}: fill in both True/False answers."),
+      },
+    });
+    if (validationError) {
+      setError(validationError);
       return;
     }
     setLoading(true);
     try {
     const validLessons = lessons.filter((l) => l.title.trim());
     const validQuizzes = quizzes
-      .filter((q) => q.title.trim())
-      .filter((q) => q.questions.some((qt) => qt.questionText.trim()) && q.questions.filter((qt) => qt.questionText.trim()).length > 0)
+      .filter((q) => !quizIsBlank(q))
       .map((q) => ({
         id: q.id,
         title: q.title.trim(),
@@ -475,7 +502,7 @@ export function EditCourseForm({
           return Number.isFinite(n) && n >= 1 ? n : null;
         })(),
         questions: q.questions
-          .filter((qt) => qt.questionText.trim())
+          .filter(questionHasContent)
           .map((qt) => ({
             type: qt.type,
             questionText: qt.questionText.trim(),
@@ -490,7 +517,7 @@ export function EditCourseForm({
       }));
     const validLessonIndices = lessons.map((l, i) => (l.title.trim() ? i : -1)).filter((i) => i >= 0);
     const validQuizIndices = quizzes
-      .map((q, i) => (q.title.trim() && q.questions.some((qt) => qt.questionText.trim()) ? i : -1))
+      .map((q, i) => (!quizIsBlank(q) ? i : -1))
       .filter((i) => i >= 0);
     const linkedIds = linkedQuizzes.map((l) => l.quizId);
     const filteredContentOrder = contentOrder

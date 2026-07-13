@@ -325,7 +325,7 @@ export function QuizTake({
               className="rounded-[var(--radius-card)] border border-[var(--color-border)] bg-[var(--color-surface)] p-6"
             >
               <p className="font-medium text-[var(--color-foreground)]">
-                {i + 1}. {q.questionText}
+                {i + 1}.{q.questionText?.trim() ? ` ${q.questionText}` : ""}
               </p>
               {q.imageUrl ? (
                 <img

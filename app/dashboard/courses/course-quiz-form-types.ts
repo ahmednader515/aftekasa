@@ -22,6 +22,132 @@ export type QuizRow = {
   questions: QuestionRow[];
 };
 
+/** Keep questions that have text and/or an image (image alone can be the prompt). */
+export function questionHasContent(qt: { questionText?: string | null; imageUrl?: string | null }): boolean {
+  return Boolean(qt.questionText?.trim() || qt.imageUrl?.trim());
+}
+
+/** Unused question slot (no prompt and no option drafts). */
+export function questionIsBlank(qt: QuestionRow): boolean {
+  return (
+    !qt.questionText?.trim() &&
+    !qt.imageUrl?.trim() &&
+    !qt.options.some((o) => o.text.trim() || o.isCorrect)
+  );
+}
+
+export function quizIsBlank(quiz: QuizRow): boolean {
+  return !quiz.title.trim() && quiz.questions.every(questionIsBlank);
+}
+
+export type CourseFormLessonLike = {
+  title: string;
+  videoUrl?: string;
+  content?: string;
+  pdfUrl?: string;
+  acceptsHomework?: boolean;
+  homeworkMaterials?: unknown[];
+  homeworkExplanationVideoUrl?: string;
+};
+
+export function lessonIsBlank(lesson: CourseFormLessonLike): boolean {
+  return (
+    !lesson.title.trim() &&
+    !lesson.videoUrl?.trim() &&
+    !lesson.content?.trim() &&
+    !lesson.pdfUrl?.trim() &&
+    !lesson.acceptsHomework &&
+    !(lesson.homeworkMaterials && lesson.homeworkMaterials.length > 0) &&
+    !lesson.homeworkExplanationVideoUrl?.trim()
+  );
+}
+
+export type CourseFormValidationMessages = {
+  titleArRequired: string;
+  titleEnRequired: string;
+  descriptionArRequired: string;
+  descriptionEnRequired: string;
+  teacherRequired: string;
+  lessonTitleRequired: string;
+  quizTitleRequired: string;
+  quizNeedsQuestion: string;
+  remedialParentRequired: string;
+  questionNeedsPrompt: string;
+  mcqOptionsRequired: string;
+  correctAnswerRequired: string;
+  tfOptionsRequired: string;
+};
+
+/** Returns the first validation error, or null if the form is ready to save. */
+export function validateCourseFormContent(params: {
+  titleAr: string;
+  titleEn: string;
+  descriptionAr: string;
+  descriptionEn: string;
+  requireTeacher?: boolean;
+  teacherId?: string;
+  lessons: CourseFormLessonLike[];
+  quizzes: QuizRow[];
+  messages: CourseFormValidationMessages;
+}): string | null {
+  const { messages } = params;
+  if (!params.titleAr.trim()) return messages.titleArRequired;
+  if (!params.titleEn.trim()) return messages.titleEnRequired;
+  if (!params.descriptionAr.trim()) return messages.descriptionArRequired;
+  if (!params.descriptionEn.trim()) return messages.descriptionEnRequired;
+  if (params.requireTeacher && !params.teacherId?.trim()) return messages.teacherRequired;
+
+  for (let i = 0; i < params.lessons.length; i++) {
+    const lesson = params.lessons[i];
+    if (lessonIsBlank(lesson)) continue;
+    if (!lesson.title.trim()) {
+      return messages.lessonTitleRequired.replace("{n}", String(i + 1));
+    }
+  }
+
+  for (let qi = 0; qi < params.quizzes.length; qi++) {
+    const quiz = params.quizzes[qi];
+    if (quizIsBlank(quiz)) continue;
+    const quizN = String(qi + 1);
+    if (!quiz.title.trim()) {
+      return messages.quizTitleRequired.replace("{n}", quizN);
+    }
+    if (quiz.quizType === "REMEDIAL" && !quiz.parentQuizRef) {
+      return messages.remedialParentRequired.replace("{n}", quizN);
+    }
+    const activeQuestions = quiz.questions.filter((qt) => !questionIsBlank(qt));
+    if (activeQuestions.length === 0) {
+      return messages.quizNeedsQuestion.replace("{n}", quizN);
+    }
+    for (let qti = 0; qti < quiz.questions.length; qti++) {
+      const qt = quiz.questions[qti];
+      if (questionIsBlank(qt)) continue;
+      const qN = String(qti + 1);
+      if (!questionHasContent(qt)) {
+        return messages.questionNeedsPrompt.replace("{quiz}", quizN).replace("{q}", qN);
+      }
+      const filledOptions = qt.options.filter((o) => o.text.trim());
+      if (qt.type === "MULTIPLE_CHOICE") {
+        if (filledOptions.length < 2) {
+          return messages.mcqOptionsRequired.replace("{quiz}", quizN).replace("{q}", qN);
+        }
+        if (!filledOptions.some((o) => o.isCorrect)) {
+          return messages.correctAnswerRequired.replace("{quiz}", quizN).replace("{q}", qN);
+        }
+      } else if (qt.type === "TRUE_FALSE") {
+        if (filledOptions.length < 2) {
+          return messages.tfOptionsRequired.replace("{quiz}", quizN).replace("{q}", qN);
+        }
+        if (!qt.options.some((o) => o.isCorrect && o.text.trim())) {
+          return messages.correctAnswerRequired.replace("{quiz}", quizN).replace("{q}", qN);
+        }
+      }
+    }
+  }
+
+  return null;
+}
+
 export type LinkedQuizRow = {
   quizId: string;
   title: string;
