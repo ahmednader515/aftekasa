@@ -170,24 +170,6 @@ export default async function AddBalancePage() {
 
   const methods: PaymentMethodSection[] = [
     {
-      id: "vodafone",
-      title: resolveAddBalanceCopy(
-        locale,
-        settings.addBalanceMethodTitle,
-        settings.addBalanceMethodTitleEn,
-        t,
-        "methodTitle",
-      ),
-      transferInstruction: resolveAddBalanceCopy(
-        locale,
-        settings.addBalanceTransferInstruction,
-        settings.addBalanceTransferInstructionEn,
-        t,
-        "transferInstruction",
-      ),
-      walletNumber: settings.addBalanceWalletNumber?.trim() || "01023005622",
-    },
-    {
       id: "instapay",
       title: resolveAddBalanceCopy(
         locale,
@@ -204,6 +186,24 @@ export default async function AddBalancePage() {
         "instapayTransferInstruction",
       ),
       walletNumber: settings.addBalanceInstapayWalletNumber?.trim() || "",
+    },
+    {
+      id: "vodafone",
+      title: resolveAddBalanceCopy(
+        locale,
+        settings.addBalanceMethodTitle,
+        settings.addBalanceMethodTitleEn,
+        t,
+        "methodTitle",
+      ),
+      transferInstruction: resolveAddBalanceCopy(
+        locale,
+        settings.addBalanceTransferInstruction,
+        settings.addBalanceTransferInstructionEn,
+        t,
+        "transferInstruction",
+      ),
+      walletNumber: settings.addBalanceWalletNumber?.trim() || "01023005622",
     },
     {
       id: "etisalat",

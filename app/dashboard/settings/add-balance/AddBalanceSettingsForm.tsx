@@ -117,46 +117,6 @@ export function AddBalanceSettingsForm({ initialSettings }: { initialSettings: H
 
       <div className="rounded-[var(--radius-card)] border border-[var(--color-border)] bg-[var(--color-surface)] p-6">
         <h3 className="mb-4 text-lg font-semibold text-[var(--color-foreground)]">
-          {t(`${Ab}.sectionVodafone`, "فودافون كاش")}
-        </h3>
-        <div className="space-y-4">
-          <input
-            value={form.addBalanceMethodTitle}
-            onChange={(e) => setField("addBalanceMethodTitle", e.target.value)}
-            placeholder={t(`${Ab}.phMethodTitleAr`)}
-            className={inputClass}
-          />
-          <input
-            value={form.addBalanceMethodTitleEn}
-            onChange={(e) => setField("addBalanceMethodTitleEn", e.target.value)}
-            placeholder={t(`${Ab}.phMethodTitleEn`)}
-            className={inputClass}
-          />
-          <textarea
-            value={form.addBalanceTransferInstruction}
-            onChange={(e) => setField("addBalanceTransferInstruction", e.target.value)}
-            placeholder={t(`${Ab}.phTransferInstrAr`)}
-            rows={2}
-            className={inputClass}
-          />
-          <textarea
-            value={form.addBalanceTransferInstructionEn}
-            onChange={(e) => setField("addBalanceTransferInstructionEn", e.target.value)}
-            placeholder={t(`${Ab}.phTransferInstrEn`)}
-            rows={2}
-            className={inputClass}
-          />
-          <input
-            value={form.addBalanceWalletNumber}
-            onChange={(e) => setField("addBalanceWalletNumber", e.target.value)}
-            placeholder={t(`${Ab}.phWallet`)}
-            className={inputClass}
-          />
-        </div>
-      </div>
-
-      <div className="rounded-[var(--radius-card)] border border-[var(--color-border)] bg-[var(--color-surface)] p-6">
-        <h3 className="mb-4 text-lg font-semibold text-[var(--color-foreground)]">
           {t(`${Ab}.sectionInstapay`, "إنستاباي")}
         </h3>
         <div className="space-y-4">
@@ -190,6 +150,46 @@ export function AddBalanceSettingsForm({ initialSettings }: { initialSettings: H
             value={form.addBalanceInstapayWalletNumber}
             onChange={(e) => setField("addBalanceInstapayWalletNumber", e.target.value)}
             placeholder={t(`${Ab}.phInstapayWallet`, "رقم/حساب إنستاباي")}
+            className={inputClass}
+          />
+        </div>
+      </div>
+
+      <div className="rounded-[var(--radius-card)] border border-[var(--color-border)] bg-[var(--color-surface)] p-6">
+        <h3 className="mb-4 text-lg font-semibold text-[var(--color-foreground)]">
+          {t(`${Ab}.sectionVodafone`, "فودافون كاش")}
+        </h3>
+        <div className="space-y-4">
+          <input
+            value={form.addBalanceMethodTitle}
+            onChange={(e) => setField("addBalanceMethodTitle", e.target.value)}
+            placeholder={t(`${Ab}.phMethodTitleAr`)}
+            className={inputClass}
+          />
+          <input
+            value={form.addBalanceMethodTitleEn}
+            onChange={(e) => setField("addBalanceMethodTitleEn", e.target.value)}
+            placeholder={t(`${Ab}.phMethodTitleEn`)}
+            className={inputClass}
+          />
+          <textarea
+            value={form.addBalanceTransferInstruction}
+            onChange={(e) => setField("addBalanceTransferInstruction", e.target.value)}
+            placeholder={t(`${Ab}.phTransferInstrAr`)}
+            rows={2}
+            className={inputClass}
+          />
+          <textarea
+            value={form.addBalanceTransferInstructionEn}
+            onChange={(e) => setField("addBalanceTransferInstructionEn", e.target.value)}
+            placeholder={t(`${Ab}.phTransferInstrEn`)}
+            rows={2}
+            className={inputClass}
+          />
+          <input
+            value={form.addBalanceWalletNumber}
+            onChange={(e) => setField("addBalanceWalletNumber", e.target.value)}
+            placeholder={t(`${Ab}.phWallet`)}
             className={inputClass}
           />
         </div>
