@@ -1,4 +1,6 @@
 export const SIGNUP_GRADES = [
+  "الصف الأول الاعدادي",
+  "الصف الثاني الاعدادي",
   "الأول الثانوي",
   "الثاني الثانوي",
   "الثالث الثانوي",
@@ -7,6 +9,8 @@ export const SIGNUP_GRADES = [
 export type SignupGrade = (typeof SIGNUP_GRADES)[number];
 
 export const SIGNUP_DIVISIONS_BY_GRADE: Record<SignupGrade, readonly string[]> = {
+  "الصف الأول الاعدادي": [],
+  "الصف الثاني الاعدادي": [],
   "الأول الثانوي": ["بكالوريا", "عام"],
   "الثاني الثانوي": ["علمي", "ادبي", "بكالوريا"],
   "الثالث الثانوي": ["علمي رياضة", "ادبي"],
@@ -53,12 +57,18 @@ export function divisionsForGrade(grade: string): readonly string[] {
   return SIGNUP_DIVISIONS_BY_GRADE[grade as SignupGrade] ?? [];
 }
 
+export function gradeHasDivisions(grade: string): boolean {
+  return divisionsForGrade(grade).length > 0;
+}
+
 export function isValidSignupGrade(grade: string): grade is SignupGrade {
   return (SIGNUP_GRADES as readonly string[]).includes(grade);
 }
 
 export function isValidDivisionForGrade(grade: string, division: string): boolean {
-  return divisionsForGrade(grade).includes(division);
+  const options = divisionsForGrade(grade);
+  if (options.length === 0) return !division.trim();
+  return options.includes(division);
 }
 
 export function isValidSignupStudyType(value: string): value is SignupStudyType {

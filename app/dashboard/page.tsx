@@ -495,7 +495,7 @@ export default async function DashboardPage() {
             <h2 className="mb-4 text-lg font-semibold text-[var(--color-foreground)]">
               {t("dashboard.page.customizePlatformSectionTitle", "Customize the platform")}
             </h2>
-            <div className="grid gap-6 sm:grid-cols-2">
+            <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
               <Link
                 href="/dashboard/settings/homepage"
                 className="flex min-h-[200px] flex-col justify-center rounded-[var(--radius-card)] border border-[var(--color-border)] bg-[var(--color-surface)] p-6 text-center transition hover:border-[var(--color-primary)]/30"
@@ -507,6 +507,20 @@ export default async function DashboardPage() {
                   {t(
                     "dashboard.page.homepageSettingsMeta",
                     "Teacher image, platform name, title, and logo",
+                  )}
+                </p>
+              </Link>
+              <Link
+                href="/dashboard/settings/grade-stages"
+                className="flex min-h-[200px] flex-col justify-center rounded-[var(--radius-card)] border border-[var(--color-border)] bg-[var(--color-surface)] p-6 text-center transition hover:border-[var(--color-primary)]/30"
+              >
+                <h3 className="font-semibold text-[var(--color-foreground)]">
+                  {t("dashboard.page.gradeStagesTitleCard", "Educational stage cards")}
+                </h3>
+                <p className="mt-1 text-sm text-[var(--color-muted)]">
+                  {t(
+                    "dashboard.page.gradeStagesMeta",
+                    "Change the portrait image on each educational stage card",
                   )}
                 </p>
               </Link>

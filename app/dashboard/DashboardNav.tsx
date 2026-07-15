@@ -137,6 +137,11 @@ export function DashboardNav({
         </NavLink>
       )}
       {(isAdmin || isAssistant) && (
+        <NavLink href="/dashboard/settings/grade-stages">
+          {t("dashboardNav.gradeStages", "Educational stage cards")}
+        </NavLink>
+      )}
+      {(isAdmin || isAssistant) && (
         <NavLink href="/dashboard/settings/add-balance">
           {t("dashboardNav.paymentMethods", "Student payment methods")}
         </NavLink>

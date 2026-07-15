@@ -25,7 +25,7 @@ const signupSchema = z
     student_number: z.string().min(1, "رقم الهاتف مطلوب"),
     guardian_number: z.string().min(1, "رقم ولي الأمر مطلوب"),
     grade: z.enum(SIGNUP_GRADES, { message: "اختر الصف الدراسي" }),
-    division: z.string().min(1, "اختر القسم"),
+    division: z.string().optional().default(""),
     study_type: z.enum(SIGNUP_STUDY_TYPES, { message: "اختر نوع الدراسة" }),
     governorate: z.enum(EGYPT_GOVERNORATES, { message: "اختر المحافظة" }),
   })
@@ -42,7 +42,11 @@ const signupSchema = z
     { message: "رقم ولي الأمر يجب أن يكون 11 رقماً", path: ["guardian_number"] },
   )
   .refine(
-    (data) => isValidDivisionForGrade(data.grade, data.division),
+    (data) => {
+      const options = divisionsForGrade(data.grade);
+      if (options.length === 0) return !(data.division ?? "").trim();
+      return isValidDivisionForGrade(data.grade, data.division ?? "");
+    },
     { message: "القسم غير صالح للصف المختار", path: ["division"] },
   );
 
@@ -70,7 +74,9 @@ export async function POST(request: NextRequest) {
     if (!isValidSignupGrade(grade) || !isValidSignupStudyType(study_type) || !isValidGovernorate(governorate)) {
       return NextResponse.json({ error: "بيانات غير صالحة" }, { status: 400 });
     }
-    if (!divisionsForGrade(grade).includes(division)) {
+    const divisionOptions = divisionsForGrade(grade);
+    const resolvedDivision = divisionOptions.length === 0 ? null : (division ?? "").trim() || null;
+    if (divisionOptions.length > 0 && !divisionOptions.includes(division ?? "")) {
       return NextResponse.json({ error: "القسم غير صالح للصف المختار" }, { status: 400 });
     }
 
@@ -92,7 +98,7 @@ export async function POST(request: NextRequest) {
       student_number: phone,
       guardian_number: digitsOnly(guardian_number),
       grade,
-      division,
+      division: resolvedDivision,
       study_type,
       governorate,
     });

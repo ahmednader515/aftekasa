@@ -19,23 +19,6 @@ import { parsePlatformNewsItems, PLATFORM_NEWS_MAX_ITEMS } from "@/lib/platform-
 import { useT } from "@/components/LocaleProvider";
 import { fillMessage } from "@/lib/i18n/interpolate";
 
-const HERO_BG_PRESET_IDS: HeroBgPreset[] = [
-  "navy",
-  "indigo",
-  "purple",
-  "teal",
-  "forest",
-  "slate",
-  "crimson",
-  "rose",
-  "sunset",
-  "sky",
-  "cyan",
-  "stone",
-  "midnight",
-  "wine",
-];
-
 type HeroTemplate = "classic" | "image_slider" | "coming_soon";
 type SliderImageKey =
   | "heroSliderImage1"
@@ -210,7 +193,6 @@ export function HomepageSettingsForm({
   const [imageUploadError, setImageUploadError] = useState("");
   const [logoUploading, setLogoUploading] = useState(false);
   const [logoUploadError, setLogoUploadError] = useState("");
-  const [floatImageUploading, setFloatImageUploading] = useState<1 | 2 | 3 | null>(null);
   const [sliderImageUploading, setSliderImageUploading] = useState<1 | 2 | 3 | 4 | 5 | null>(null);
   const [hero3Uploading, setHero3Uploading] = useState<"phone" | "badge1" | "badge2" | null>(null);
   const [platformItemUploading, setPlatformItemUploading] = useState<string | null>(null);
@@ -893,132 +875,6 @@ export function HomepageSettingsForm({
           placeholder={fh("teacherImageUrlPh")}
           className="mt-2 w-full rounded-[var(--radius-btn)] border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2 text-sm"
         />
-
-        <div className="mt-6">
-          <h4 className="mb-2 text-sm font-semibold text-[var(--color-foreground)]">{fh("heroBgCardTitle")}</h4>
-          <p className="mb-3 text-sm text-[var(--color-muted)]">{fh("heroBgCardIntro")}</p>
-          <div className="mb-4 flex flex-wrap gap-6">
-            <label className="flex cursor-pointer items-center gap-2 text-sm text-[var(--color-foreground)]">
-              <input
-                type="radio"
-                name="heroBgMode"
-                className="accent-[var(--color-primary)]"
-                checked={!form.heroBgUseCustom}
-                onChange={() =>
-                  setForm((f) => {
-                    const g =
-                      HERO_BG_PRESET_GRADIENTS[f.heroBgPreset] ?? HERO_BG_PRESET_GRADIENTS.navy;
-                    return { ...f, heroBgUseCustom: false, heroBgCustomFrom: g.from, heroBgCustomTo: g.to };
-                  })
-                }
-              />
-              {fh("presetGradients")}
-            </label>
-            <label className="flex cursor-pointer items-center gap-2 text-sm text-[var(--color-foreground)]">
-              <input
-                type="radio"
-                name="heroBgMode"
-                className="accent-[var(--color-primary)]"
-                checked={form.heroBgUseCustom}
-                onChange={() => setForm((f) => ({ ...f, heroBgUseCustom: true }))}
-              />
-              {fh("customGradient")}
-            </label>
-          </div>
-
-          {!form.heroBgUseCustom ? (
-            <div className="flex flex-wrap gap-3">
-              {HERO_BG_PRESET_IDS.map((presetId) => {
-                const grad = HERO_BG_PRESET_GRADIENTS[presetId];
-                const label = t(`${Hp}.heroPreset.${presetId}`);
-                return (
-                  <button
-                    key={presetId}
-                    type="button"
-                    onClick={() =>
-                      setForm((f) => ({
-                        ...f,
-                        heroBgPreset: presetId,
-                        heroBgCustomFrom: grad.from,
-                        heroBgCustomTo: grad.to,
-                      }))
-                    }
-                    className={`flex flex-col items-center gap-1 rounded-[var(--radius-btn)] border-2 p-2 transition ${
-                      form.heroBgPreset === presetId
-                        ? "border-[var(--color-primary)] ring-2 ring-[var(--color-primary)]/30"
-                        : "border-[var(--color-border)] hover:border-[var(--color-muted)]"
-                    }`}
-                    title={label}
-                  >
-                    <span
-                      className="h-10 w-14 rounded border border-white/20"
-                      style={{
-                        background: `linear-gradient(180deg, ${grad.from} 0%, ${grad.to} 100%)`,
-                      }}
-                    />
-                    <span className="max-w-[7rem] text-center text-xs font-medium text-[var(--color-foreground)]">
-                      {label}
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-          ) : (
-            <div className="space-y-4 rounded-[var(--radius-btn)] border border-[var(--color-border)] bg-[var(--color-background)] p-4">
-              <p className="text-sm text-[var(--color-muted)]">
-                {fh("customGradientIntro")}{" "}
-                <code className="rounded bg-[var(--color-border)]/40 px-1">#14162E</code>.
-              </p>
-              <div
-                className="h-14 w-full max-w-md rounded border border-[var(--color-border)]"
-                style={{
-                  background: `linear-gradient(180deg, ${normalizeHeroHex(form.heroBgCustomFrom) ?? "#14162E"} 0%, ${normalizeHeroHex(form.heroBgCustomTo) ?? "#1E2145"} 100%)`,
-                }}
-                aria-hidden
-              />
-              <div className="grid gap-4 sm:grid-cols-2">
-                <div>
-                  <span className="mb-1 block text-xs font-medium text-[var(--color-muted)]">{fh("gradientTop")}</span>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <input
-                      type="color"
-                      value={normalizeHeroHex(form.heroBgCustomFrom) ?? "#14162e"}
-                      onChange={(e) => setForm((f) => ({ ...f, heroBgCustomFrom: e.target.value }))}
-                      className="h-10 w-14 cursor-pointer rounded border border-[var(--color-border)] bg-transparent p-0.5"
-                      aria-label={fh("ariaGradientTop")}
-                    />
-                    <input
-                      type="text"
-                      value={form.heroBgCustomFrom}
-                      onChange={(e) => setForm((f) => ({ ...f, heroBgCustomFrom: e.target.value }))}
-                      placeholder="#14162E"
-                      className="min-w-0 flex-1 rounded-[var(--radius-btn)] border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-2 font-mono text-sm"
-                    />
-                  </div>
-                </div>
-                <div>
-                  <span className="mb-1 block text-xs font-medium text-[var(--color-muted)]">{fh("gradientBottom")}</span>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <input
-                      type="color"
-                      value={normalizeHeroHex(form.heroBgCustomTo) ?? "#1e2145"}
-                      onChange={(e) => setForm((f) => ({ ...f, heroBgCustomTo: e.target.value }))}
-                      className="h-10 w-14 cursor-pointer rounded border border-[var(--color-border)] bg-transparent p-0.5"
-                      aria-label={fh("ariaGradientBottom")}
-                    />
-                    <input
-                      type="text"
-                      value={form.heroBgCustomTo}
-                      onChange={(e) => setForm((f) => ({ ...f, heroBgCustomTo: e.target.value }))}
-                      placeholder="#1E2145"
-                      className="min-w-0 flex-1 rounded-[var(--radius-btn)] border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-2 font-mono text-sm"
-                    />
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
-        </div>
       </div>
 
       <div className="rounded-[var(--radius-card)] border border-[var(--color-border)] bg-[var(--color-surface)] p-6">
@@ -1117,130 +973,6 @@ export function HomepageSettingsForm({
       </div>
 
       <div className="rounded-[var(--radius-card)] border border-[var(--color-border)] bg-[var(--color-surface)] p-6">
-        <h3 className="mb-2 text-lg font-semibold text-[var(--color-foreground)]">{fh("floatImagesTitle")}</h3>
-        <p className="mb-4 text-sm text-[var(--color-muted)]">{fh("floatImagesIntro")}</p>
-        <div className="space-y-4">
-          <div>
-            <label className="block text-sm font-medium text-[var(--color-foreground)]">{fh("float1")}</label>
-            <div className="mt-1 flex flex-wrap items-center gap-2">
-              {form.heroFloatImage1 ? (
-                <img src={form.heroFloatImage1} alt="" className="h-10 w-10 rounded object-cover border border-[var(--color-border)]" />
-              ) : null}
-              <input
-                type="text"
-                value={form.heroFloatImage1}
-                onChange={(e) => setForm((f) => ({ ...f, heroFloatImage1: e.target.value }))}
-                placeholder={fh("floatPh1")}
-                className="min-w-[180px] flex-1 rounded-[var(--radius-btn)] border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2 text-sm"
-              />
-              <label className="shrink-0 cursor-pointer rounded-[var(--radius-btn)] border border-[var(--color-primary)] bg-[var(--color-primary)]/10 px-3 py-2 text-sm font-medium text-[var(--color-primary)] transition hover:bg-[var(--color-primary)]/20 disabled:opacity-50">
-                {floatImageUploading === 1 ? fh("uploading") : fh("addImage")}
-                <input
-                  type="file"
-                  accept="image/jpeg,image/png,image/webp,image/gif"
-                  className="hidden"
-                  disabled={floatImageUploading !== null}
-                  onChange={async (e) => {
-                    const f = e.target.files?.[0];
-                    if (!f) return;
-                    setFloatImageUploading(1);
-                    try {
-                      const fd = new FormData();
-                      fd.set("file", f);
-                      const res = await fetch("/api/upload/image", { method: "POST", body: fd });
-                      const data = await res.json().catch(() => ({}));
-                      if (res.ok && data.url) setForm((prev) => ({ ...prev, heroFloatImage1: data.url }));
-                    } finally {
-                      setFloatImageUploading(null);
-                      e.target.value = "";
-                    }
-                  }}
-                />
-              </label>
-            </div>
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-[var(--color-foreground)]">{fh("float2")}</label>
-            <div className="mt-1 flex flex-wrap items-center gap-2">
-              {form.heroFloatImage2 ? (
-                <img src={form.heroFloatImage2} alt="" className="h-10 w-10 rounded object-cover border border-[var(--color-border)]" />
-              ) : null}
-              <input
-                type="text"
-                value={form.heroFloatImage2}
-                onChange={(e) => setForm((f) => ({ ...f, heroFloatImage2: e.target.value }))}
-                placeholder={fh("floatPh2")}
-                className="min-w-[180px] flex-1 rounded-[var(--radius-btn)] border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2 text-sm"
-              />
-              <label className="shrink-0 cursor-pointer rounded-[var(--radius-btn)] border border-[var(--color-primary)] bg-[var(--color-primary)]/10 px-3 py-2 text-sm font-medium text-[var(--color-primary)] transition hover:bg-[var(--color-primary)]/20 disabled:opacity-50">
-                {floatImageUploading === 2 ? fh("uploading") : fh("addImage")}
-                <input
-                  type="file"
-                  accept="image/jpeg,image/png,image/webp,image/gif"
-                  className="hidden"
-                  disabled={floatImageUploading !== null}
-                  onChange={async (e) => {
-                    const f = e.target.files?.[0];
-                    if (!f) return;
-                    setFloatImageUploading(2);
-                    try {
-                      const fd = new FormData();
-                      fd.set("file", f);
-                      const res = await fetch("/api/upload/image", { method: "POST", body: fd });
-                      const data = await res.json().catch(() => ({}));
-                      if (res.ok && data.url) setForm((prev) => ({ ...prev, heroFloatImage2: data.url }));
-                    } finally {
-                      setFloatImageUploading(null);
-                      e.target.value = "";
-                    }
-                  }}
-                />
-              </label>
-            </div>
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-[var(--color-foreground)]">{fh("float3")}</label>
-            <div className="mt-1 flex flex-wrap items-center gap-2">
-              {form.heroFloatImage3 ? (
-                <img src={form.heroFloatImage3} alt="" className="h-10 w-10 rounded object-cover border border-[var(--color-border)]" />
-              ) : null}
-              <input
-                type="text"
-                value={form.heroFloatImage3}
-                onChange={(e) => setForm((f) => ({ ...f, heroFloatImage3: e.target.value }))}
-                placeholder={fh("floatPh3")}
-                className="min-w-[180px] flex-1 rounded-[var(--radius-btn)] border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2 text-sm"
-              />
-              <label className="shrink-0 cursor-pointer rounded-[var(--radius-btn)] border border-[var(--color-primary)] bg-[var(--color-primary)]/10 px-3 py-2 text-sm font-medium text-[var(--color-primary)] transition hover:bg-[var(--color-primary)]/20 disabled:opacity-50">
-                {floatImageUploading === 3 ? fh("uploading") : fh("addImage")}
-                <input
-                  type="file"
-                  accept="image/jpeg,image/png,image/webp,image/gif"
-                  className="hidden"
-                  disabled={floatImageUploading !== null}
-                  onChange={async (e) => {
-                    const f = e.target.files?.[0];
-                    if (!f) return;
-                    setFloatImageUploading(3);
-                    try {
-                      const fd = new FormData();
-                      fd.set("file", f);
-                      const res = await fetch("/api/upload/image", { method: "POST", body: fd });
-                      const data = await res.json().catch(() => ({}));
-                      if (res.ok && data.url) setForm((prev) => ({ ...prev, heroFloatImage3: data.url }));
-                    } finally {
-                      setFloatImageUploading(null);
-                      e.target.value = "";
-                    }
-                  }}
-                />
-              </label>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div className="rounded-[var(--radius-card)] border border-[var(--color-border)] bg-[var(--color-surface)] p-6">
         <h3 className="mb-4 text-lg font-semibold text-[var(--color-foreground)]">{fh("homeTextsTitle")}</h3>
         <div className="space-y-4">
           <div>
@@ -1281,18 +1013,20 @@ export function HomepageSettingsForm({
           </div>
           <div>
             <label className="block text-sm font-medium text-[var(--color-foreground)]">{fh("heroSloganLabel")}</label>
-            <input
-              type="text"
+            <textarea
               value={form.heroSlogan}
               onChange={(e) => setForm((f) => ({ ...f, heroSlogan: e.target.value }))}
+              rows={3}
+              maxLength={600}
               className="mt-1 w-full rounded-[var(--radius-btn)] border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2"
               placeholder={fh("phHeroSloganAr")}
             />
             <label className="mt-2 block text-xs font-medium text-[var(--color-muted)]">{fh("labelHeroSloganEn")}</label>
-            <input
-              type="text"
+            <textarea
               value={form.heroSloganEn}
               onChange={(e) => setForm((f) => ({ ...f, heroSloganEn: e.target.value }))}
+              rows={3}
+              maxLength={600}
               className="mt-1 w-full rounded-[var(--radius-btn)] border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2"
               placeholder={fh("phHeroSloganEn")}
             />

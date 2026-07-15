@@ -1,10 +1,11 @@
 import { getCoursesPublishedCached } from "@/lib/public-data-cache";
-import { getTeacherIdsExcludedFromPublicCourseLists, getUserById } from "@/lib/db";
+import { getTeacherIdsExcludedFromPublicCourseLists, getUserById, ensureGradeCategories } from "@/lib/db";
 import { courseIsHiddenFromPublicTeacherCatalog } from "@/lib/permissions";
 import { redirect } from "next/navigation";
 import { TeacherCoursesSearch, type TeacherCourseListItem } from "./TeacherCoursesSearch";
 import { getLocaleFromCookie, getServerTranslator } from "@/lib/i18n/server";
 import { pickLocalizedText } from "@/lib/i18n/localized-field";
+import { getGradeStageBySlug } from "@/lib/grade-stages";
 
 export const revalidate = 60;
 
@@ -21,6 +22,12 @@ type Props = { searchParams: Promise<{ category?: string; teacher?: string }> };
 export default async function CoursesPage({ searchParams }: Props) {
   const [t, locale] = await Promise.all([getServerTranslator(), getLocaleFromCookie()]);
   const { category: categorySlug, teacher: teacherId } = await searchParams;
+  try {
+    await ensureGradeCategories();
+  } catch {
+    /* DB not ready */
+  }
+
   let courses: Awaited<ReturnType<typeof getCoursesPublishedCached>> = [];
   try {
     courses = await getCoursesPublishedCached(true);
@@ -39,6 +46,8 @@ export default async function CoursesPage({ searchParams }: Props) {
     }
     teacherName = u.name ?? null;
   }
+
+  const gradeStage = getGradeStageBySlug(categorySlug);
 
   let filtered =
     categorySlug?.trim()
@@ -63,7 +72,7 @@ export default async function CoursesPage({ searchParams }: Props) {
     );
   }
 
-  const categoryName =
+  const categoryNameFromCourse =
     categorySlug && filtered.length > 0
       ? pickLocalizedText(
           locale,
@@ -72,17 +81,29 @@ export default async function CoursesPage({ searchParams }: Props) {
         )
       : null;
 
+  const gradeName = gradeStage
+    ? locale === "en"
+      ? gradeStage.nameEn
+      : gradeStage.nameAr
+    : null;
+
+  const categoryName = gradeName || categoryNameFromCourse;
+
   const pageTitle = teacherName
     ? `${t("courses.teacherCoursesPrefix", "Courses by")} ${teacherName}`
-    : categoryName
-      ? `${t("courses.categoryCoursesPrefix", "Category courses:")} ${categoryName}`
-      : t("courses.allCoursesTitle", "All courses");
+    : gradeName
+      ? `${t("courses.gradeCoursesPrefix", "Courses for")} ${gradeName}`
+      : categoryName
+        ? `${t("courses.categoryCoursesPrefix", "Category courses:")} ${categoryName}`
+        : t("courses.allCoursesTitle", "All courses");
 
   const pageSubtitle = teacherName
     ? t("courses.teacherCoursesSubtitle", "Published courses by this teacher on the platform")
-    : categoryName
-      ? t("courses.categoryCoursesSubtitle", "Courses for the selected category only")
-      : t("courses.allCoursesSubtitle", "Choose the right course and start learning step by step");
+    : gradeName
+      ? t("courses.gradeCoursesSubtitle", "Published courses for this educational stage")
+      : categoryName
+        ? t("courses.categoryCoursesSubtitle", "Courses for the selected category only")
+        : t("courses.allCoursesSubtitle", "Choose the right course and start learning step by step");
 
   return (
     <div className="mx-auto max-w-6xl px-4 py-12 sm:px-6">

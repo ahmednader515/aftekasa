@@ -1,10 +1,10 @@
 import Link from "next/link";
 import type { Session } from "next-auth";
 import {
+  getGradeStageCategories,
   listActivePlatformSubscriptionsForUser,
 } from "@/lib/db";
 import {
-  getCategoriesCached,
   getCoursesPublishedCached,
   getReviewsCached,
   listActiveSubscriptionPlansPublicCached,
@@ -12,12 +12,14 @@ import {
   listTeachersForHomepageCached,
 } from "@/lib/public-data-cache";
 import type { HomepageSetting } from "@/lib/types";
-import { CourseCard } from "@/components/CourseCard";
 import { HomeTeachersSection } from "@/components/HomeTeachersSection";
 import { HomeSubscriptionsSection } from "@/components/HomeSubscriptionsSection";
 import { HomeStoreSection } from "@/components/HomeStoreSection";
 import { HomePlatformDetailsSection } from "@/components/HomePlatformDetailsSection";
+import { HomeGradeStagesSection } from "@/components/HomeGradeStagesSection";
 import { parsePlatformDetailsItems } from "@/lib/platform-details";
+import { GRADE_STAGES, GRADE_STAGE_SLUGS, type GradeStageSlug } from "@/lib/grade-stages";
+import { fillMessage } from "@/lib/i18n/interpolate";
 import { parsePlatformNewsItems } from "@/lib/platform-news";
 import { HomePlatformNewsSlider } from "@/components/HomePlatformNewsSlider";
 import { getLocaleFromCookie, getServerTranslator } from "@/lib/i18n/server";
@@ -52,7 +54,6 @@ export async function HomePageBelowFold({
 }) {
   const [t, locale] = await Promise.all([getServerTranslator(), getLocaleFromCookie()]);
   let courses: CourseWithCategory[] = [];
-  let categories: Awaited<ReturnType<typeof getCategoriesCached>> = [];
   let reviews: Awaited<ReturnType<typeof getReviewsCached>> = [];
   let teachersForHome: Awaited<ReturnType<typeof listTeachersForHomepageCached>> = [];
   let subscriptionPlansHome: Awaited<ReturnType<typeof listActiveSubscriptionPlansPublicCached>> = [];
@@ -84,9 +85,7 @@ export async function HomePageBelowFold({
           () => [] as Awaited<ReturnType<typeof listStoreProductsPublicCached>>,
         )
       : Promise.resolve([] as Awaited<ReturnType<typeof listStoreProductsPublicCached>>),
-    Promise.all([getCoursesPublishedCached(true), getCategoriesCached()]).catch(
-      () => [[], []] as [CourseWithCategory[], Awaited<ReturnType<typeof getCategoriesCached>>],
-    ),
+    getCoursesPublishedCached(true).catch(() => [] as CourseWithCategory[]),
     getReviewsCached().catch(() => [] as Awaited<ReturnType<typeof getReviewsCached>>),
     needsStudentSubscription && session?.user?.id
       ? (async () => {
@@ -106,7 +105,7 @@ export async function HomePageBelowFold({
   teachersForHome = teachersResult;
   subscriptionPlansHome = subscriptionPlansResult;
   storeProductsHome = storeProductsResult;
-  [courses, categories] = catalogResult;
+  courses = catalogResult;
   reviews = reviewsResult;
   const studentActiveSubscriptions = studentSubscriptionResult;
 
@@ -133,31 +132,27 @@ export async function HomePageBelowFold({
         })
       : [];
 
-  const categoryIdToCourses = new Map<string, CourseWithCategory[]>();
-  const uncategorized: CourseWithCategory[] = [];
+  const countsBySlug: Partial<Record<GradeStageSlug, number>> = {};
+  for (const stage of GRADE_STAGES) {
+    countsBySlug[stage.slug] = 0;
+  }
   for (const c of courses) {
-    const catId = (c as { category?: { id?: string } }).category?.id;
-    if (catId) {
-      if (!categoryIdToCourses.has(catId)) categoryIdToCourses.set(catId, []);
-      categoryIdToCourses.get(catId)!.push(c);
-    } else {
-      uncategorized.push(c);
+    const slug = (c as { category?: { slug?: string } }).category?.slug;
+    if (slug && slug in countsBySlug) {
+      countsBySlug[slug as GradeStageSlug] = (countsBySlug[slug as GradeStageSlug] ?? 0) + 1;
     }
   }
-
-  const sections: { title: string; slug?: string; courses: CourseWithCategory[] }[] = [];
-  for (const cat of categories) {
-    const list = categoryIdToCourses.get(cat.id);
-    if (list?.length) {
-      sections.push({
-        title: pickLocalizedText(locale, (cat as { nameAr?: string | null }).nameAr, cat.name),
-        slug: cat.slug,
-        courses: list,
-      });
-    }
-  }
-  if (uncategorized.length > 0) {
-    sections.push({ title: t("courses.allCoursesTitle", "All courses"), courses: uncategorized });
+  const fallbackGradeImageUrl =
+    homepageSettings.teacherImageUrl?.trim() || "/instructor.png";
+  const gradeCategories = await getGradeStageCategories();
+  const imagesBySlug: Partial<Record<GradeStageSlug, string | null>> = {};
+  for (const cat of gradeCategories) {
+    const slug = String((cat as { slug?: string }).slug ?? "") as GradeStageSlug;
+    if (!(GRADE_STAGE_SLUGS as readonly string[]).includes(slug)) continue;
+    const row = cat as Record<string, unknown>;
+    const raw = row.imageUrl ?? row.image_url;
+    imagesBySlug[slug] =
+      typeof raw === "string" && raw.trim() ? raw.trim() : null;
   }
 
   const platformDetailsItems = parsePlatformDetailsItems(homepageSettings.platformDetailsItems);
@@ -309,47 +304,26 @@ export async function HomePageBelowFold({
         />
       ) : null}
 
-      {sections.length > 0
-        ? sections.map((section, idx) => (
-            <section
-              key={section.slug ?? `uncategorized-${idx}`}
-              className="bg-white dark:bg-[var(--color-background)] mx-auto max-w-6xl px-4 py-16 sm:px-6"
-            >
-              <div className="flex items-end justify-between gap-4">
-                <div>
-                  <h2 className="text-2xl font-bold text-[var(--color-foreground)]">{section.title}</h2>
-                  <p className="mt-1 text-[var(--color-muted)]">
-                    {section.slug
-                      ? `${t("courses.categoryCoursesPrefix", "Category courses:")} ${section.title}`
-                      : t("courses.allCoursesTitle", "All courses")}
-                  </p>
-                </div>
-                <Link
-                  href={section.slug ? `/courses?category=${encodeURIComponent(section.slug)}` : "/courses"}
-                  className="text-sm font-medium text-[var(--color-primary)] hover:underline"
-                >
-                  {t("common.courses", "Courses")} ←
-                </Link>
-              </div>
-
-              <div className="mt-10 grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
-                {section.courses.slice(0, 6).map((course) => (
-                  <CourseCard key={course.id} course={course} />
-                ))}
-              </div>
-              {section.courses.length > 6 && (
-                <div className="mt-6 text-center">
-                  <Link
-                    href={section.slug ? `/courses?category=${encodeURIComponent(section.slug)}` : "/courses"}
-                    className="text-sm font-medium text-[var(--color-primary)] hover:underline"
-                  >
-                    {t("common.courses", "Courses")} ({section.courses.length})
-                  </Link>
-                </div>
-              )}
-            </section>
-          ))
-        : null}
+      <HomeGradeStagesSection
+        title={t("home.gradesTitle", "Educational stages")}
+        subtitle={t(
+          "home.gradesSubtitle",
+          "Choose your educational level to view the courses that suit you",
+        )}
+        browseCta={t("home.gradesBrowseCta", "Browse courses")}
+        fallbackImageUrl={fallbackGradeImageUrl}
+        imagesBySlug={imagesBySlug}
+        countsBySlug={countsBySlug}
+        locale={locale}
+        courseCountLabel={(count) => {
+          if (count === 0) return t("home.gradesCourseCountZero", "0 courses");
+          if (count === 1) return t("home.gradesCourseCountOne", "1 course");
+          return fillMessage(t("home.gradesCourseCount", "{count} courses"), { count });
+        }}
+        allCoursesForLabel={(grade) =>
+          fillMessage(t("home.gradesAllCoursesFor", "All courses for {grade}"), { grade })
+        }
+      />
 
       {homepageSettings.storeEnabled && storeProductsHome.length > 0 ? (
         <HomeStoreSection
@@ -489,7 +463,7 @@ export async function HomePageBelowFold({
         const label =
           "pointer-events-none hidden select-none rounded-full bg-black/50 px-3 py-1 text-xs font-semibold tracking-wide text-white/95 shadow-sm md:inline-flex md:translate-x-0 md:opacity-100 group-hover:inline-flex group-hover:opacity-100 group-focus-visible:inline-flex";
 
-        const verticalPositions = ["bottom-6", "bottom-24", "bottom-42", "bottom-60", "bottom-78"] as const;
+        const verticalPositions = ["bottom-6", "bottom-24", "bottom-44", "bottom-64", "bottom-80"] as const;
         const rightLabelWord = homepageDefaultForLocale(
           locale,
           pickLocalizedText(locale, homepageSettings.socialRightLabel, homepageSettings.socialRightLabelEn),

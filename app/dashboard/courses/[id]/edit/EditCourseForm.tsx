@@ -21,10 +21,11 @@ import {
 import { QuestionImageField } from "../../QuestionImageField";
 import { LessonHomeworkAssignmentFields } from "../../LessonHomeworkAssignmentFields";
 import { parseHomeworkMaterials, type HomeworkMaterial } from "@/lib/homework-materials";
+import { GRADE_STAGE_SLUGS, isGradeStageSlug } from "@/lib/grade-stages";
 
 export type { ContentOrderEntry };
 
-type CategoryOption = { id: string; name: string; nameAr?: string | null };
+type CategoryOption = { id: string; name: string; nameAr?: string | null; slug?: string | null };
 type TeacherOption = { id: string; name: string | null; email: string | null };
 type LessonRow = {
   id?: string;
@@ -136,8 +137,6 @@ export function EditCourseForm({
     isPublished: initialData.isPublished,
     maxQuizAttempts: initialData.maxQuizAttempts != null ? String(initialData.maxQuizAttempts) : "",
     categoryId: initialData.categoryId ?? "",
-    categoryNameAr: "",
-    categoryNameEn: "",
   });
   const [lessons, setLessons] = useState<LessonRow[]>(
     initialData.lessons.length > 0
@@ -161,6 +160,14 @@ export function EditCourseForm({
       : [defaultLesson]
   );
 
+  const gradeCategories = categories
+    .filter((cat) => isGradeStageSlug(cat.slug))
+    .sort((a, b) => {
+      const ai = GRADE_STAGE_SLUGS.indexOf(a.slug as (typeof GRADE_STAGE_SLUGS)[number]);
+      const bi = GRADE_STAGE_SLUGS.indexOf(b.slug as (typeof GRADE_STAGE_SLUGS)[number]);
+      return ai - bi;
+    });
+
   const loadCategories = () => {
     fetch("/api/categories")
       .then((r) => r.json())
@@ -171,24 +178,6 @@ export function EditCourseForm({
   useEffect(() => {
     loadCategories();
   }, []);
-
-  const [deletingCategoryId, setDeletingCategoryId] = useState<string | null>(null);
-  async function handleDeleteCategory(catId: string) {
-    if (!confirm(t(`${Cf}.confirmDeleteCategory`))) return;
-    setDeletingCategoryId(catId);
-    try {
-      const res = await fetch(`/api/categories/${encodeURIComponent(catId)}`, { method: "DELETE" });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        alert(data.error ?? t(`${Cf}.deleteCategoryFailed`));
-        return;
-      }
-      if (form.categoryId === catId) setForm((f) => ({ ...f, categoryId: "" }));
-      loadCategories();
-    } finally {
-      setDeletingCategoryId(null);
-    }
-  }
 
   const [quizzes, setQuizzes] = useState<QuizRow[]>(
     initialData.quizzes.length > 0
@@ -483,6 +472,10 @@ export function EditCourseForm({
       setError(validationError);
       return;
     }
+    if (!form.categoryId.trim()) {
+      setError(t("courses.gradeRequired", "Please select a grade"));
+      return;
+    }
     setLoading(true);
     try {
     const validLessons = lessons.filter((l) => l.title.trim());
@@ -545,9 +538,7 @@ export function EditCourseForm({
       isPublished: form.isPublished,
       maxQuizAttempts: form.maxQuizAttempts.trim() ? parseInt(form.maxQuizAttempts, 10) : null,
       ...(isAdmin && teacherId.trim() ? { teacherId: teacherId.trim() } : {}),
-      ...(form.categoryNameAr.trim() || form.categoryNameEn.trim()
-        ? { categoryNameAr: form.categoryNameAr.trim(), categoryNameEn: form.categoryNameEn.trim() }
-        : form.categoryId ? { categoryId: form.categoryId } : { categoryId: null }),
+      categoryId: form.categoryId,
       lessons: validLessons.map((l) => ({
         id: l.id?.trim() || undefined,
         title: l.title.trim(),
@@ -663,57 +654,25 @@ export function EditCourseForm({
             />
           </div>
           <div>
-            <label className="block text-sm font-medium text-[var(--color-foreground)]">{t(`${Cf}.categoryOptional`)}</label>
-            <p className="mt-1 text-xs text-[var(--color-muted)]">{t(`${Cf}.categoryHelpChooseOrNew`)}</p>
+            <label className="block text-sm font-medium text-[var(--color-foreground)]">
+              {t("courses.gradeLabel", "Grade")} <span className="text-red-500">*</span>
+            </label>
+            <p className="mt-1 text-xs text-[var(--color-muted)]">
+              {t(`${Cf}.gradeHelp`, "Choose the educational stage this course belongs to")}
+            </p>
             <select
-              value={form.categoryNameAr.trim() || form.categoryNameEn.trim() ? "" : form.categoryId}
-              onChange={(e) => setForm((f) => ({ ...f, categoryId: e.target.value, categoryNameAr: "", categoryNameEn: "" }))}
+              required
+              value={form.categoryId}
+              onChange={(e) => setForm((f) => ({ ...f, categoryId: e.target.value }))}
               className="mt-1 w-full rounded-[var(--radius-btn)] border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2"
             >
-              <option value="">{t(`${Cf}.noCategoryOption`)}</option>
-              {categories.map((cat) => (
+              <option value="">{t("courses.gradePlaceholder", "Select grade")}</option>
+              {gradeCategories.map((cat) => (
                 <option key={cat.id} value={cat.id}>
                   {cat.nameAr ?? cat.name}
                 </option>
               ))}
             </select>
-            <div className="mt-2">
-              <label className="block text-xs text-[var(--color-muted)]">{t(`${Cf}.newCategoryBilingualHint`, "New category name (Arabic / English)")}</label>
-              <input
-                type="text"
-                value={form.categoryNameAr}
-                onChange={(e) => setForm((f) => ({ ...f, categoryNameAr: e.target.value, categoryId: "" }))}
-                placeholder={t(`${Cf}.newCategoryArabicPlaceholder`)}
-                className="mt-1 w-full rounded-[var(--radius-btn)] border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2 text-sm"
-              />
-              <input
-                type="text"
-                value={form.categoryNameEn}
-                onChange={(e) => setForm((f) => ({ ...f, categoryNameEn: e.target.value, categoryId: "" }))}
-                placeholder={t(`${Cf}.newCategoryEnglishLabel`)}
-                className="mt-1 w-full rounded-[var(--radius-btn)] border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2 text-sm"
-              />
-            </div>
-            {categories.length > 0 && (
-              <div className="mt-3">
-                <p className="mb-2 text-xs font-medium text-[var(--color-muted)]">{t(`${Cf}.deleteExistingSection`)}</p>
-                <ul className="space-y-1.5">
-                  {categories.map((cat) => (
-                    <li key={cat.id} className="flex items-center justify-between gap-2 rounded-[var(--radius-btn)] border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2 text-sm">
-                      <span className="text-[var(--color-foreground)]">{cat.nameAr ?? cat.name}</span>
-                      <button
-                        type="button"
-                        onClick={() => handleDeleteCategory(cat.id)}
-                        disabled={deletingCategoryId === cat.id}
-                        className="rounded border border-red-500/50 bg-red-500/10 px-2 py-1 text-xs font-medium text-red-600 hover:bg-red-500/20 disabled:opacity-50"
-                      >
-                        {deletingCategoryId === cat.id ? t(`${Cf}.deletingBtn`) : t(`${Cf}.deleteBtn`)}
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
           </div>
           <div>
             <label className="block text-sm font-medium text-[var(--color-foreground)]">{t(`${Cf}.priceEgpLabel`)}</label>

@@ -1,5 +1,4 @@
 import type { Metadata, Viewport } from "next";
-import { Outfit } from "next/font/google";
 import NextTopLoader from "nextjs-toploader";
 import { getServerSession } from "next-auth";
 import "./globals.css";
@@ -18,6 +17,7 @@ import { normalizeHeroHex } from "@/lib/hero-bg";
 import { getDir, makeTranslator } from "@/lib/i18n/core";
 import { getLocaleFromCookie } from "@/lib/i18n/server";
 import { LocaleProvider } from "@/components/LocaleProvider";
+import { SiteChromeGate } from "@/components/SiteChromeGate";
 import { homepageDefaultForLocale } from "@/lib/homepage-default-for-locale";
 import { pickLocalizedText } from "@/lib/i18n/localized-field";
 import {
@@ -26,16 +26,11 @@ import {
   HOMEPAGE_DEFAULT_FOOTER_TITLE_AR,
 } from "@/lib/homepage-known-defaults";
 
-const outfit = Outfit({
-  variable: "--font-outfit",
-  subsets: ["latin"],
-  display: "swap",
-});
-
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
   viewportFit: "cover",
+  colorScheme: "light",
 };
 
 export async function generateMetadata(): Promise<Metadata> {
@@ -133,13 +128,8 @@ export default async function RootLayout({
   }
 
   return (
-    <html lang={locale} dir={dir} suppressHydrationWarning>
+    <html lang={locale} dir={dir} className="light" suppressHydrationWarning>
       <head>
-        <script
-          dangerouslySetInnerHTML={{
-            __html: `(function(){var t=localStorage.getItem("theme");document.documentElement.classList.add(t==="light"?"light":"dark");})();`,
-          }}
-        />
         {platformPrimaryColor ? (
           <style
             dangerouslySetInnerHTML={{
@@ -148,7 +138,7 @@ export default async function RootLayout({
           />
         ) : null}
         </head>
-      <body className={`${outfit.variable} font-sans antialiased min-h-screen flex flex-col`}>
+      <body className="font-sans antialiased min-h-screen flex flex-col">
         <NextTopLoader
           color={platformPrimaryColor ?? "#0d9488"}
           height={3}
@@ -161,13 +151,17 @@ export default async function RootLayout({
           <SessionProvider>
             <StoreSplashProvider>
             <ForceLogoutGuard />
-            <Header
-              platformName={platformName}
-              headerLogoUrl={headerLogoUrl}
-              platformSubscriptionExpiryLabel={platformSubscriptionExpiryLabel}
-            />
+            <SiteChromeGate>
+              <Header
+                platformName={platformName}
+                headerLogoUrl={headerLogoUrl}
+                platformSubscriptionExpiryLabel={platformSubscriptionExpiryLabel}
+              />
+            </SiteChromeGate>
             <main className="flex-1">{children}</main>
-            <Footer footerTitle={footerTitle} footerTagline={footerTagline} footerCopyright={footerCopyright} />
+            <SiteChromeGate>
+              <Footer footerTitle={footerTitle} footerTagline={footerTagline} footerCopyright={footerCopyright} />
+            </SiteChromeGate>
             </StoreSplashProvider>
           </SessionProvider>
         </LocaleProvider>

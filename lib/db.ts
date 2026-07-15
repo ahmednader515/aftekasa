@@ -28,6 +28,7 @@ import type {
   QuizAdminManageRow,
 } from "./types";
 import { generateCopyrightCodeCandidate } from "./copyright-code";
+import { GRADE_STAGES, GRADE_STAGE_SLUGS, isGradeStageSlug } from "./grade-stages";
 import {
   HOMEPAGE_DEFAULT_CTA_BADGE_AR,
   HOMEPAGE_DEFAULT_CTA_BUTTON_AR,
@@ -540,6 +541,40 @@ export async function createUser(data: {
       /* أعمدة المدرس غير متوفرة بعد */
     });
   }
+  if (
+    data.grade !== undefined ||
+    data.division !== undefined ||
+    data.study_type !== undefined ||
+    data.governorate !== undefined
+  ) {
+    try {
+      await sql`
+        UPDATE "User"
+        SET
+          grade = ${data.grade ?? null},
+          division = ${data.division ?? null},
+          "studyType" = ${data.study_type ?? null},
+          governorate = ${data.governorate ?? null},
+          updated_at = NOW()
+        WHERE id = ${id}
+      `;
+    } catch {
+      try {
+        await sql`
+          UPDATE "User"
+          SET
+            grade = ${data.grade ?? null},
+            division = ${data.division ?? null},
+            study_type = ${data.study_type ?? null},
+            governorate = ${data.governorate ?? null},
+            updated_at = NOW()
+          WHERE id = ${id}
+        `;
+      } catch {
+        /* أعمدة التسجيل غير متوفرة في هذا المخطط */
+      }
+    }
+  }
   const u = await getUserById(id);
   if (!u) throw new Error("فشل إنشاء المستخدم");
   return u;
@@ -705,19 +740,84 @@ async function ensureCategoryCreatedByColumn(): Promise<void> {
   }
 }
 
+/** يضمن وجود أقسام المراحل الدراسية الثابتة (المراحل الدراسية) */
+export async function ensureGradeCategories(): Promise<Category[]> {
+  await ensureCategoryCreatedByColumn();
+  const result: Category[] = [];
+  for (const stage of GRADE_STAGES) {
+    const existing = await sql`
+      SELECT * FROM "Category" WHERE slug = ${stage.slug} LIMIT 1
+    `;
+    if (existing.length > 0) {
+      const row = existing[0] as Record<string, unknown>;
+      await sql`
+        UPDATE "Category"
+        SET name = ${stage.nameEn},
+            name_ar = ${stage.nameAr},
+            "order" = ${stage.order}
+        WHERE slug = ${stage.slug}
+      `;
+      const refreshed = await sql`SELECT * FROM "Category" WHERE slug = ${stage.slug} LIMIT 1`;
+      result.push(rowToCamel((refreshed[0] ?? row) as Record<string, unknown>) as Category);
+      continue;
+    }
+    const id = generateId();
+    await sql`
+      INSERT INTO "Category" (id, name, name_ar, slug, description, image_url, "order", created_by_id)
+      VALUES (
+        ${id},
+        ${stage.nameEn},
+        ${stage.nameAr},
+        ${stage.slug},
+        ${null},
+        ${null},
+        ${stage.order},
+        ${null}
+      )
+    `;
+    const rows = await sql`SELECT * FROM "Category" WHERE id = ${id} LIMIT 1`;
+    result.push(rowToCamel(rows[0] as Record<string, unknown>) as Category);
+  }
+  return result;
+}
+
+export async function getCategoryBySlug(slug: string): Promise<Category | null> {
+  await ensureCategoryCreatedByColumn();
+  const s = slug.trim();
+  if (!s) return null;
+  const rows = await sql`SELECT * FROM "Category" WHERE slug = ${s} LIMIT 1`;
+  return (rowToCamel(rows[0] as Record<string, unknown>) as Category) ?? null;
+}
+
+/** أقسام المراحل الدراسية الخمسة (بعد التأكد من وجودها) */
+export async function getGradeStageCategories(): Promise<Category[]> {
+  await ensureGradeCategories();
+  const slugs = [...GRADE_STAGE_SLUGS];
+  const rows = await sql`
+    SELECT * FROM "Category"
+    WHERE slug = ANY(${slugs}::text[])
+    ORDER BY "order" ASC
+  `;
+  return rowsToCamel(rows as Record<string, unknown>[]) as Category[];
+}
+
 export async function getCategories(): Promise<Category[]> {
   await ensureCategoryCreatedByColumn();
+  await ensureGradeCategories();
   const rows = await sql`SELECT * FROM "Category" ORDER BY "order" ASC`;
   return rowsToCamel(rows as Record<string, unknown>[]) as Category[];
 }
 
-/** أقسام تظهر في لوحة إنشاء/تعديل الدورة: المدرس يرى أقسامه فقط؛ الأدمن يرى أقسام المنصة وأقسام أي أدمن/مساعد */
+/** أقسام تظهر في لوحة إنشاء/تعديل الدورة: المدرس يرى أقسامه + المراحل الثابتة؛ الأدمن يرى أقسام المنصة وأقسام أي أدمن/مساعد */
 export async function getCategoriesForDashboard(userId: string, role: UserRole): Promise<Category[]> {
   await ensureCategoryCreatedByColumn();
+  await ensureGradeCategories();
+  const gradeSlugs = [...GRADE_STAGE_SLUGS];
   if (role === "TEACHER") {
     const rows = await sql`
       SELECT * FROM "Category"
       WHERE created_by_id = ${userId}
+         OR slug = ANY(${gradeSlugs}::text[])
       ORDER BY "order" ASC
     `;
     return rowsToCamel(rows as Record<string, unknown>[]) as Category[];
@@ -754,6 +854,13 @@ export async function categoryIsManageableOnDashboard(
   await ensureCategoryCreatedByColumn();
   const id = categoryId.trim();
   if (!id) return false;
+
+  const catRows = await sql`SELECT slug FROM "Category" WHERE id = ${id} LIMIT 1`;
+  const slug = String((catRows[0] as { slug?: string } | undefined)?.slug ?? "");
+  if (isGradeStageSlug(slug) && (role === "TEACHER" || role === "ADMIN" || role === "ASSISTANT_ADMIN")) {
+    return true;
+  }
+
   if (role === "TEACHER") {
     const rows = await sql`
       SELECT 1 FROM "Category" c
@@ -799,6 +906,23 @@ export async function createCategory(data: {
   `;
   const rows = await sql`SELECT * FROM "Category" WHERE id = ${id} LIMIT 1`;
   return rowToCamel(rows[0] as Record<string, unknown>) as Category;
+}
+
+/** تحديث صورة بطاقة مرحلة دراسية (أو أي قسم) */
+export async function updateCategoryImage(
+  id: string,
+  imageUrl: string | null
+): Promise<Category | null> {
+  await ensureCategoryCreatedByColumn();
+  const cid = id.trim();
+  if (!cid) return null;
+  const url = imageUrl?.trim() || null;
+  await sql`
+    UPDATE "Category"
+    SET image_url = ${url}, updated_at = NOW()
+    WHERE id = ${cid}
+  `;
+  return getCategoryById(cid);
 }
 
 /** بحث عام بالاسم (بدون تقييد مالك) — للبذرة والأدوات القديمة */
@@ -858,10 +982,15 @@ export async function findCategoryByNameForDashboard(
   return null;
 }
 
-/** حذف قسم — الدورات المرتبطة به تصبح بدون قسم (category_id = null) */
+/** حذف قسم — الدورات المرتبطة به تصبح بدون قسم (category_id = null). المراحل الثابتة لا تُحذف. */
 export async function deleteCategory(id: string): Promise<boolean> {
   if (!id?.trim()) return false;
   await ensureCategoryCreatedByColumn();
+  const rows = await sql`SELECT slug FROM "Category" WHERE id = ${id.trim()} LIMIT 1`;
+  const slug = String((rows[0] as { slug?: string } | undefined)?.slug ?? "");
+  if (isGradeStageSlug(slug)) {
+    throw new Error("GRADE_STAGE_PROTECTED");
+  }
   await sql`DELETE FROM "Category" WHERE id = ${id.trim()}`;
   return true;
 }

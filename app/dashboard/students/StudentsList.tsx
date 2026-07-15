@@ -24,6 +24,10 @@ type Student = {
   student_number?: string | null;
   guardian_number?: string | null;
   copyright_code?: string | null;
+  grade?: string | null;
+  division?: string | null;
+  studyType?: string | null;
+  governorate?: string | null;
   _count: { enrollments: number };
   enrollments: Enrollment[];
 };
@@ -86,7 +90,11 @@ export function StudentsList({
         s.email.toLowerCase().includes(q) ||
         (s.student_number ?? "").toLowerCase().includes(q) ||
         (s.guardian_number ?? "").toLowerCase().includes(q) ||
-        (s.copyright_code ?? "").toLowerCase().includes(q),
+        (s.copyright_code ?? "").toLowerCase().includes(q) ||
+        (s.grade ?? "").toLowerCase().includes(q) ||
+        (s.division ?? "").toLowerCase().includes(q) ||
+        (s.studyType ?? "").toLowerCase().includes(q) ||
+        (s.governorate ?? "").toLowerCase().includes(q),
     );
   }, [initialStudents, search]);
 
@@ -237,7 +245,7 @@ export function StudentsList({
         <label className="block text-sm font-medium text-[var(--color-foreground)]">
           {t(
             "dashboard.studentsPage.searchLabel",
-            "Search by name, email, student number, guardian number, or copyright code",
+            "Search by name, email, student number, guardian number, grade, governorate, or copyright code",
           )}
         </label>
         <input
@@ -247,7 +255,7 @@ export function StudentsList({
           onChange={(e) => setSearch(e.target.value)}
           placeholder={t(
             "dashboard.studentsPage.searchPlaceholder",
-            "Name, email, numbers, or copyright code (e.g. A0125)…",
+            "Name, phone, grade, governorate, or copyright code…",
           )}
           className="mt-1 w-full max-w-md rounded-[var(--radius-btn)] border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2"
         />
@@ -256,13 +264,16 @@ export function StudentsList({
         <p className="mb-4 text-sm text-red-600 dark:text-red-400">{error}</p>
       ) : null}
       <div className="overflow-x-auto rounded-[var(--radius-card)] border border-[var(--color-border)] bg-[var(--color-surface)]">
-        <table dir={dir} className="w-full">
+        <table dir={dir} className="w-full min-w-[1100px]">
           <thead>
             <tr className="border-b border-[var(--color-border)] bg-[var(--color-background)]/50">
               <th className={thClass}>{t("dashboard.studentsPage.colName", "Name")}</th>
-              <th className={thClass}>{t("dashboard.studentsPage.colEmail", "Email")}</th>
               <th className={thClass}>{t("dashboard.studentsPage.colStudentNumber", "Student number")}</th>
               <th className={thClass}>{t("dashboard.studentsPage.colGuardianNumber", "Guardian number")}</th>
+              <th className={thClass}>{t("dashboard.studentsPage.colGrade", "Grade")}</th>
+              <th className={thClass}>{t("dashboard.studentsPage.colDivision", "Division")}</th>
+              <th className={thClass}>{t("dashboard.studentsPage.colStudyType", "Study type")}</th>
+              <th className={thClass}>{t("dashboard.studentsPage.colGovernorate", "Governorate")}</th>
               <th className={thClass}>{t("dashboard.studentsPage.colCopyright", "Copyright code")}</th>
               <th className={thClass}>{t("dashboard.studentsPage.colBalance", "Balance")}</th>
               <th className={thClass}>{t("dashboard.studentsPage.colCourses", "Courses")}</th>
@@ -282,9 +293,12 @@ export function StudentsList({
             {filtered.map((s) => (
               <tr key={s.id} className="border-b border-[var(--color-border)] last:border-0">
                 <td className="p-3 font-medium text-[var(--color-foreground)]">{s.name}</td>
-                <td className="p-3 text-[var(--color-muted)]">{s.email}</td>
                 <td className="p-3 text-[var(--color-foreground)]">{s.student_number ?? dash}</td>
                 <td className="p-3 text-[var(--color-foreground)]">{s.guardian_number ?? dash}</td>
+                <td className="p-3 text-[var(--color-foreground)]">{s.grade ?? dash}</td>
+                <td className="p-3 text-[var(--color-foreground)]">{s.division ?? dash}</td>
+                <td className="p-3 text-[var(--color-foreground)]">{s.studyType ?? dash}</td>
+                <td className="p-3 text-[var(--color-foreground)]">{s.governorate ?? dash}</td>
                 <td className="p-3 font-mono text-sm text-[var(--color-foreground)]">
                   {s.copyright_code ?? dash}
                 </td>
@@ -439,7 +453,7 @@ export function StudentsList({
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
           <div
             dir={dir}
-            className="w-full max-w-md rounded-[var(--radius-card)] border border-[var(--color-border)] bg-[var(--color-surface)] p-6 shadow-lg"
+            className="w-full max-w-lg rounded-[var(--radius-card)] border border-[var(--color-border)] bg-[var(--color-surface)] p-6 shadow-lg"
           >
             <h3 className="text-lg font-semibold text-[var(--color-foreground)]">
               {t("dashboard.studentsPage.editStudentTitle", "Edit student")}
@@ -501,6 +515,40 @@ export function StudentsList({
                     "Guardian number",
                   )}
                 />
+              </div>
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <div className="rounded-[var(--radius-btn)] border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2">
+                  <p className="text-xs text-[var(--color-muted)]">
+                    {t("dashboard.studentsPage.colGrade", "Grade")}
+                  </p>
+                  <p className="mt-0.5 text-sm font-medium text-[var(--color-foreground)]">
+                    {editStudent.grade ?? dash}
+                  </p>
+                </div>
+                <div className="rounded-[var(--radius-btn)] border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2">
+                  <p className="text-xs text-[var(--color-muted)]">
+                    {t("dashboard.studentsPage.colDivision", "Division")}
+                  </p>
+                  <p className="mt-0.5 text-sm font-medium text-[var(--color-foreground)]">
+                    {editStudent.division ?? dash}
+                  </p>
+                </div>
+                <div className="rounded-[var(--radius-btn)] border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2">
+                  <p className="text-xs text-[var(--color-muted)]">
+                    {t("dashboard.studentsPage.colStudyType", "Study type")}
+                  </p>
+                  <p className="mt-0.5 text-sm font-medium text-[var(--color-foreground)]">
+                    {editStudent.studyType ?? dash}
+                  </p>
+                </div>
+                <div className="rounded-[var(--radius-btn)] border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2">
+                  <p className="text-xs text-[var(--color-muted)]">
+                    {t("dashboard.studentsPage.colGovernorate", "Governorate")}
+                  </p>
+                  <p className="mt-0.5 text-sm font-medium text-[var(--color-foreground)]">
+                    {editStudent.governorate ?? dash}
+                  </p>
+                </div>
               </div>
               <div>
                 <label className="block text-sm font-medium text-[var(--color-foreground)]">

@@ -51,6 +51,13 @@ export default async function StudentsPage() {
     student_number: s.student_number ?? null,
     guardian_number: s.guardian_number ?? null,
     copyright_code: (row.copyright_code as string | null | undefined) ?? (s as { copyright_code?: string | null }).copyright_code ?? null,
+    grade: (row.grade as string | null | undefined) ?? null,
+    division: (row.division as string | null | undefined) ?? null,
+    studyType:
+      (row.studyType as string | null | undefined) ??
+      (row.study_type as string | null | undefined) ??
+      null,
+    governorate: (row.governorate as string | null | undefined) ?? null,
     _count: { enrollments: enrollmentsByUser[i].length },
     enrollments: enrollmentsByUser[i].map((e) => ({
       id: e.id,

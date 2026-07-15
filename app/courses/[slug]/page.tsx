@@ -217,7 +217,7 @@ export default async function CoursePage({ params }: Props) {
                 />
               </div>
               <div className="mt-2 w-full border-t border-[var(--color-border)] pt-4">
-                <p className="text-sm text-[var(--color-muted)]">
+                <p className="whitespace-pre-line text-sm text-[var(--color-muted)]">
                   {pickLocalizedText(locale, homepageSettings.heroSlogan, homepageSettings.heroSloganEn) ||
                     t("courses.allCoursesSubtitle", "Choose the right course and start learning step by step")}
                 </p>
