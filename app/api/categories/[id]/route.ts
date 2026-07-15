@@ -59,7 +59,7 @@ export async function PATCH(
     if (!updated) {
       return NextResponse.json({ error: "فشل التحديث" }, { status: 500 });
     }
-    const row = updated as Record<string, unknown>;
+    const row = updated as unknown as Record<string, unknown>;
     return NextResponse.json({
       id: row.id,
       slug: row.slug,

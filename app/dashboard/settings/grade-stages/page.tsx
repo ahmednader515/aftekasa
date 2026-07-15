@@ -21,7 +21,7 @@ export default async function DashboardGradeStagesSettingsPage() {
 
   const initialStages: GradeStageRow[] = GRADE_STAGES.map((stage) => {
     const cat = bySlug.get(stage.slug);
-    const row = (cat ?? {}) as Record<string, unknown>;
+    const row = (cat ?? {}) as unknown as Record<string, unknown>;
     const raw = row.imageUrl ?? row.image_url;
     const imageUrl = typeof raw === "string" && raw.trim() ? raw.trim() : "";
     return {

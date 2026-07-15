@@ -149,7 +149,7 @@ export async function HomePageBelowFold({
   for (const cat of gradeCategories) {
     const slug = String((cat as { slug?: string }).slug ?? "") as GradeStageSlug;
     if (!(GRADE_STAGE_SLUGS as readonly string[]).includes(slug)) continue;
-    const row = cat as Record<string, unknown>;
+    const row = cat as unknown as Record<string, unknown>;
     const raw = row.imageUrl ?? row.image_url;
     imagesBySlug[slug] =
       typeof raw === "string" && raw.trim() ? raw.trim() : null;
