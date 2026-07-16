@@ -30,6 +30,12 @@ export const arMessages: Messages = {
     platformSubscriptionActive: "أنت مشترك في اشتراك المنصة",
     endsAt: "ينتهي في:",
     active: "نشط",
+    messageNotifications: "إشعارات رسائل الطلاب",
+    unreadMessagesCount: "{count} رسالة غير مقروءة",
+    noUnreadMessages: "لا توجد رسائل جديدة من الطلاب",
+    openMessages: "فتح الرسائل",
+    studentFallback: "طالب",
+    messageAttachment: "مرفق",
   },
   theme: {
     lightMode: "الوضع النهاري",

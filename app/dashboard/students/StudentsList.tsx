@@ -6,6 +6,11 @@ import { AddBalanceButton } from "./AddBalanceButton";
 import { useT } from "@/components/LocaleProvider";
 import { useDashboardTable } from "@/lib/i18n/dashboard-table";
 import { fillMessage } from "@/lib/i18n/interpolate";
+import {
+  EGYPT_GOVERNORATES,
+  SIGNUP_GRADES,
+  SIGNUP_STUDY_TYPES,
+} from "@/lib/signup-options";
 
 type Course = { id: string; title: string; titleAr: string | null; slug: string };
 
@@ -71,6 +76,10 @@ export function StudentsList({
   const [editPassword, setEditPassword] = useState("");
   const [editStudentNumber, setEditStudentNumber] = useState("");
   const [editGuardianNumber, setEditGuardianNumber] = useState("");
+  const [editGrade, setEditGrade] = useState("");
+  const [editStudyType, setEditStudyType] = useState("");
+  const [editGovernorate, setEditGovernorate] = useState("");
+  const [editCopyrightCode, setEditCopyrightCode] = useState("");
   const [coursesStudent, setCoursesStudent] = useState<Student | null>(null);
   const [addCourseId, setAddCourseId] = useState("");
   const [loading, setLoading] = useState(false);
@@ -106,6 +115,10 @@ export function StudentsList({
     setEditPassword("");
     setEditStudentNumber(s.student_number ?? "");
     setEditGuardianNumber(s.guardian_number ?? "");
+    setEditGrade(s.grade ?? "");
+    setEditStudyType(s.studyType ?? "");
+    setEditGovernorate(s.governorate ?? "");
+    setEditCopyrightCode(s.copyright_code ?? "");
     setError("");
   }
 
@@ -121,10 +134,18 @@ export function StudentsList({
       password?: string;
       student_number?: string | null;
       guardian_number?: string | null;
+      grade?: string | null;
+      study_type?: string | null;
+      governorate?: string | null;
+      copyright_code?: string | null;
     } = {
       name: editName.trim(),
       student_number: editStudentNumber.trim() || null,
       guardian_number: editGuardianNumber.trim() || null,
+      grade: editGrade.trim() || null,
+      study_type: editStudyType.trim() || null,
+      governorate: editGovernorate.trim() || null,
+      copyright_code: editCopyrightCode.trim() || null,
     };
     if (canEditFullProfile) {
       payload.email = editEmail.trim();
@@ -263,51 +284,87 @@ export function StudentsList({
       {error ? (
         <p className="mb-4 text-sm text-red-600 dark:text-red-400">{error}</p>
       ) : null}
-      <div className="overflow-x-auto rounded-[var(--radius-card)] border border-[var(--color-border)] bg-[var(--color-surface)]">
-        <table dir={dir} className="w-full min-w-[1100px]">
+      <div className="-mx-1 overflow-x-auto overscroll-x-contain rounded-[var(--radius-card)] border border-[var(--color-border)] bg-[var(--color-surface)]">
+        <table dir={dir} className="w-max min-w-[1800px] border-collapse text-sm">
           <thead>
             <tr className="border-b border-[var(--color-border)] bg-[var(--color-background)]/50">
-              <th className={thClass}>{t("dashboard.studentsPage.colName", "Name")}</th>
-              <th className={thClass}>{t("dashboard.studentsPage.colStudentNumber", "Student number")}</th>
-              <th className={thClass}>{t("dashboard.studentsPage.colGuardianNumber", "Guardian number")}</th>
-              <th className={thClass}>{t("dashboard.studentsPage.colGrade", "Grade")}</th>
-              <th className={thClass}>{t("dashboard.studentsPage.colDivision", "Division")}</th>
-              <th className={thClass}>{t("dashboard.studentsPage.colStudyType", "Study type")}</th>
-              <th className={thClass}>{t("dashboard.studentsPage.colGovernorate", "Governorate")}</th>
-              <th className={thClass}>{t("dashboard.studentsPage.colCopyright", "Copyright code")}</th>
-              <th className={thClass}>{t("dashboard.studentsPage.colBalance", "Balance")}</th>
-              <th className={thClass}>{t("dashboard.studentsPage.colCourses", "Courses")}</th>
+              <th className={`${thClass} min-w-[11rem] whitespace-nowrap`}>
+                {t("dashboard.studentsPage.colName", "Name")}
+              </th>
+              <th className={`${thClass} min-w-[9rem] whitespace-nowrap`}>
+                {t("dashboard.studentsPage.colStudentNumber", "Student number")}
+              </th>
+              <th className={`${thClass} min-w-[9rem] whitespace-nowrap`}>
+                {t("dashboard.studentsPage.colGuardianNumber", "Guardian number")}
+              </th>
+              <th className={`${thClass} min-w-[12rem] whitespace-nowrap`}>
+                {t("dashboard.studentsPage.colGrade", "Grade")}
+              </th>
+              <th className={`${thClass} min-w-[8rem] whitespace-nowrap`}>
+                {t("dashboard.studentsPage.colStudyType", "Study type")}
+              </th>
+              <th className={`${thClass} min-w-[8rem] whitespace-nowrap`}>
+                {t("dashboard.studentsPage.colGovernorate", "Governorate")}
+              </th>
+              <th className={`${thClass} min-w-[8rem] whitespace-nowrap`}>
+                {t("dashboard.studentsPage.colCopyright", "Copyright code")}
+              </th>
+              <th className={`${thClass} min-w-[6rem] whitespace-nowrap`}>
+                {t("dashboard.studentsPage.colBalance", "Balance")}
+              </th>
+              <th className={`${thClass} min-w-[5rem] whitespace-nowrap`}>
+                {t("dashboard.studentsPage.colCourses", "Courses")}
+              </th>
               {canAddBalance && (
-                <th className={thClass}>{t("dashboard.studentsPage.colEditBalance", "Edit balance")}</th>
+                <th className={`${thClass} min-w-[8rem] whitespace-nowrap`}>
+                  {t("dashboard.studentsPage.colEditBalance", "Edit balance")}
+                </th>
               )}
               {canManageEnrollments && (
-                <th className={thClass}>{t("dashboard.studentsPage.colManageCourses", "Manage courses")}</th>
+                <th className={`${thClass} min-w-[8rem] whitespace-nowrap`}>
+                  {t("dashboard.studentsPage.colManageCourses", "Manage courses")}
+                </th>
               )}
-              <th className={thClass}>{t("dashboard.studentsPage.colEdit", "Edit")}</th>
+              <th className={`${thClass} min-w-[5rem] whitespace-nowrap`}>
+                {t("dashboard.studentsPage.colEdit", "Edit")}
+              </th>
               {isAdmin && (
-                <th className={thClass}>{t("dashboard.studentsPage.colDelete", "Delete")}</th>
+                <th className={`${thClass} min-w-[5rem] whitespace-nowrap`}>
+                  {t("dashboard.studentsPage.colDelete", "Delete")}
+                </th>
               )}
             </tr>
           </thead>
           <tbody>
             {filtered.map((s) => (
               <tr key={s.id} className="border-b border-[var(--color-border)] last:border-0">
-                <td className="p-3 font-medium text-[var(--color-foreground)]">{s.name}</td>
-                <td className="p-3 text-[var(--color-foreground)]">{s.student_number ?? dash}</td>
-                <td className="p-3 text-[var(--color-foreground)]">{s.guardian_number ?? dash}</td>
-                <td className="p-3 text-[var(--color-foreground)]">{s.grade ?? dash}</td>
-                <td className="p-3 text-[var(--color-foreground)]">{s.division ?? dash}</td>
-                <td className="p-3 text-[var(--color-foreground)]">{s.studyType ?? dash}</td>
-                <td className="p-3 text-[var(--color-foreground)]">{s.governorate ?? dash}</td>
-                <td className="p-3 font-mono text-sm text-[var(--color-foreground)]">
+                <td className="whitespace-nowrap p-3 font-medium text-[var(--color-foreground)]">
+                  {s.name}
+                </td>
+                <td className="whitespace-nowrap p-3 text-[var(--color-foreground)]">
+                  {s.student_number ?? dash}
+                </td>
+                <td className="whitespace-nowrap p-3 text-[var(--color-foreground)]">
+                  {s.guardian_number ?? dash}
+                </td>
+                <td className="whitespace-nowrap p-3 text-[var(--color-foreground)]">
+                  {s.grade ?? dash}
+                </td>
+                <td className="whitespace-nowrap p-3 text-[var(--color-foreground)]">
+                  {s.studyType ?? dash}
+                </td>
+                <td className="whitespace-nowrap p-3 text-[var(--color-foreground)]">
+                  {s.governorate ?? dash}
+                </td>
+                <td className="whitespace-nowrap p-3 font-mono text-sm text-[var(--color-foreground)]">
                   {s.copyright_code ?? dash}
                 </td>
-                <td className="p-3">
+                <td className="whitespace-nowrap p-3">
                   {Math.round(Number(s.balance))} {egp}
                 </td>
-                <td className="p-3">{s._count.enrollments}</td>
+                <td className="whitespace-nowrap p-3">{s._count.enrollments}</td>
                 {canAddBalance && (
-                  <td className="p-3">
+                  <td className="whitespace-nowrap p-3">
                     <AddBalanceButton
                       studentId={s.id}
                       studentName={s.name}
@@ -316,7 +373,7 @@ export function StudentsList({
                   </td>
                 )}
                 {canManageEnrollments && (
-                  <td className="p-3">
+                  <td className="whitespace-nowrap p-3">
                     <button
                       type="button"
                       onClick={() => openCourses(s)}
@@ -326,7 +383,7 @@ export function StudentsList({
                     </button>
                   </td>
                 )}
-                <td className="p-3">
+                <td className="whitespace-nowrap p-3">
                   <button
                     type="button"
                     onClick={() => openEdit(s)}
@@ -336,7 +393,7 @@ export function StudentsList({
                   </button>
                 </td>
                 {isAdmin && (
-                  <td className="p-3">
+                  <td className="whitespace-nowrap p-3">
                     <button
                       type="button"
                       onClick={() => void handleDeleteStudent(s)}
@@ -453,27 +510,35 @@ export function StudentsList({
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
           <div
             dir={dir}
-            className="w-full max-w-lg rounded-[var(--radius-card)] border border-[var(--color-border)] bg-[var(--color-surface)] p-6 shadow-lg"
+            className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-[var(--radius-card)] border border-[var(--color-border)] bg-[var(--color-surface)] p-6 shadow-lg"
           >
             <h3 className="text-lg font-semibold text-[var(--color-foreground)]">
               {t("dashboard.studentsPage.editStudentTitle", "Edit student")}
             </h3>
             <form onSubmit={handleSaveEdit} className="mt-4 space-y-3">
               {error ? <p className="text-sm text-red-600 dark:text-red-400">{error}</p> : null}
-              {editStudent.copyright_code ? (
-                <p className="rounded-[var(--radius-btn)] border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2 text-sm text-[var(--color-muted)]">
-                  <span className="font-medium text-[var(--color-foreground)]">
-                    {t("dashboard.studentsPage.copyrightCodeLabel", "Copyright code:")}{" "}
-                  </span>
-                  <span className="font-mono font-semibold text-[var(--color-primary)]">
-                    {editStudent.copyright_code}
-                  </span>
-                  <span className="mt-2 block text-xs">{t(
-                    "dashboard.studentsPage.copyrightCodeNote",
-                    "Shown on the lesson player for the student and cannot be edited here.",
-                  )}</span>
+              <div>
+                <label className="block text-sm font-medium text-[var(--color-foreground)]">
+                  {t("dashboard.studentsPage.copyrightCodeFieldLabel", "Copyright code")}
+                </label>
+                <input
+                  type="text"
+                  value={editCopyrightCode}
+                  onChange={(e) => setEditCopyrightCode(e.target.value.toUpperCase())}
+                  className="mt-1 w-full rounded-[var(--radius-btn)] border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2 font-mono"
+                  placeholder={t(
+                    "dashboard.studentsPage.copyrightCodePlaceholder",
+                    "e.g. KJPXU",
+                  )}
+                  maxLength={10}
+                />
+                <p className="mt-1 text-xs text-[var(--color-muted)]">
+                  {t(
+                    "dashboard.studentsPage.copyrightCodeEditableNote",
+                    "Shown on the lesson player for the student.",
+                  )}
                 </p>
-              ) : null}
+              </div>
               <div>
                 <label className="block text-sm font-medium text-[var(--color-foreground)]">
                   {t("dashboard.studentsPage.nameLabel", "Name")}
@@ -517,37 +582,67 @@ export function StudentsList({
                 />
               </div>
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                <div className="rounded-[var(--radius-btn)] border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2">
-                  <p className="text-xs text-[var(--color-muted)]">
+                <div>
+                  <label className="block text-sm font-medium text-[var(--color-foreground)]">
                     {t("dashboard.studentsPage.colGrade", "Grade")}
-                  </p>
-                  <p className="mt-0.5 text-sm font-medium text-[var(--color-foreground)]">
-                    {editStudent.grade ?? dash}
-                  </p>
+                  </label>
+                  <select
+                    value={editGrade}
+                    onChange={(e) => setEditGrade(e.target.value)}
+                    className="mt-1 w-full rounded-[var(--radius-btn)] border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2"
+                  >
+                    <option value="">{dash}</option>
+                    {SIGNUP_GRADES.map((g) => (
+                      <option key={g} value={g}>
+                        {g}
+                      </option>
+                    ))}
+                    {editGrade && !(SIGNUP_GRADES as readonly string[]).includes(editGrade) ? (
+                      <option value={editGrade}>{editGrade}</option>
+                    ) : null}
+                  </select>
                 </div>
-                <div className="rounded-[var(--radius-btn)] border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2">
-                  <p className="text-xs text-[var(--color-muted)]">
-                    {t("dashboard.studentsPage.colDivision", "Division")}
-                  </p>
-                  <p className="mt-0.5 text-sm font-medium text-[var(--color-foreground)]">
-                    {editStudent.division ?? dash}
-                  </p>
-                </div>
-                <div className="rounded-[var(--radius-btn)] border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2">
-                  <p className="text-xs text-[var(--color-muted)]">
+                <div>
+                  <label className="block text-sm font-medium text-[var(--color-foreground)]">
                     {t("dashboard.studentsPage.colStudyType", "Study type")}
-                  </p>
-                  <p className="mt-0.5 text-sm font-medium text-[var(--color-foreground)]">
-                    {editStudent.studyType ?? dash}
-                  </p>
+                  </label>
+                  <select
+                    value={editStudyType}
+                    onChange={(e) => setEditStudyType(e.target.value)}
+                    className="mt-1 w-full rounded-[var(--radius-btn)] border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2"
+                  >
+                    <option value="">{dash}</option>
+                    {SIGNUP_STUDY_TYPES.map((st) => (
+                      <option key={st} value={st}>
+                        {st}
+                      </option>
+                    ))}
+                    {editStudyType &&
+                    !(SIGNUP_STUDY_TYPES as readonly string[]).includes(editStudyType) ? (
+                      <option value={editStudyType}>{editStudyType}</option>
+                    ) : null}
+                  </select>
                 </div>
-                <div className="rounded-[var(--radius-btn)] border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2">
-                  <p className="text-xs text-[var(--color-muted)]">
+                <div className="sm:col-span-2">
+                  <label className="block text-sm font-medium text-[var(--color-foreground)]">
                     {t("dashboard.studentsPage.colGovernorate", "Governorate")}
-                  </p>
-                  <p className="mt-0.5 text-sm font-medium text-[var(--color-foreground)]">
-                    {editStudent.governorate ?? dash}
-                  </p>
+                  </label>
+                  <select
+                    value={editGovernorate}
+                    onChange={(e) => setEditGovernorate(e.target.value)}
+                    className="mt-1 w-full rounded-[var(--radius-btn)] border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2"
+                  >
+                    <option value="">{dash}</option>
+                    {EGYPT_GOVERNORATES.map((gov) => (
+                      <option key={gov} value={gov}>
+                        {gov}
+                      </option>
+                    ))}
+                    {editGovernorate &&
+                    !(EGYPT_GOVERNORATES as readonly string[]).includes(editGovernorate) ? (
+                      <option value={editGovernorate}>{editGovernorate}</option>
+                    ) : null}
+                  </select>
                 </div>
               </div>
               <div>

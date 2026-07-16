@@ -11,6 +11,10 @@ CREATE TABLE IF NOT EXISTS "User" (
   name           TEXT NOT NULL,
   role           TEXT NOT NULL DEFAULT 'STUDENT' CHECK (role IN ('ADMIN', 'ASSISTANT_ADMIN', 'STUDENT')),
   balance        DECIMAL(10, 2) NOT NULL DEFAULT 0,
+  grade          TEXT,
+  division       TEXT,
+  study_type     TEXT,
+  governorate    TEXT,
   created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );

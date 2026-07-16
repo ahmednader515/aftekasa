@@ -1,7 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
-import { getConversationById, getMessagesByConversationId, canUserAccessConversation } from "@/lib/db";
+import {
+  getConversationById,
+  getMessagesByConversationId,
+  canUserAccessConversation,
+  markConversationReadForUser,
+} from "@/lib/db";
 import type { UserRole } from "@/lib/types";
 
 /** جلب رسائل محادثة معينة */
@@ -20,11 +25,17 @@ export async function GET(
     return NextResponse.json({ error: "المحادثة غير موجودة" }, { status: 404 });
   }
 
-  const allowed = await canUserAccessConversation(session.user.id, session.user.role as UserRole, conversation);
+  const role = session.user.role as UserRole;
+  const allowed = await canUserAccessConversation(session.user.id, role, conversation);
   if (!allowed) {
     return NextResponse.json({ error: "غير مصرح" }, { status: 403 });
   }
 
   const messages = await getMessagesByConversationId(conversationId);
+
+  if (role === "ADMIN" || role === "ASSISTANT_ADMIN" || role === "TEACHER") {
+    await markConversationReadForUser(conversationId, session.user.id).catch(() => {});
+  }
+
   return NextResponse.json({ conversation, messages });
 }

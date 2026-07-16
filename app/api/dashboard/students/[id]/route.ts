@@ -2,7 +2,15 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { hash } from "bcryptjs";
 import { authOptions } from "@/lib/auth";
-import { getUserById, getUserByEmailExcludingId, updateUser, clearCurrentSessionId, deleteUserById, getUsersByRole } from "@/lib/db";
+import {
+  getUserById,
+  getUserByEmailExcludingId,
+  updateUser,
+  clearCurrentSessionId,
+  deleteUserById,
+  getUsersByRole,
+  isCopyrightCodeTakenByOther,
+} from "@/lib/db";
 
 const ROLES = ["ADMIN", "ASSISTANT_ADMIN", "STUDENT"] as const;
 
@@ -26,14 +34,36 @@ export async function PATCH(
     return NextResponse.json({ error: "يمكنك تعديل حسابات الطلاب فقط" }, { status: 403 });
   }
 
-  let body: { name?: string; email?: string; role?: string; password?: string; student_number?: string | null; guardian_number?: string | null };
+  let body: {
+    name?: string;
+    email?: string;
+    role?: string;
+    password?: string;
+    student_number?: string | null;
+    guardian_number?: string | null;
+    grade?: string | null;
+    study_type?: string | null;
+    governorate?: string | null;
+    copyright_code?: string | null;
+  };
   try {
     body = await request.json();
   } catch {
     return NextResponse.json({ error: "طلب غير صالح" }, { status: 400 });
   }
 
-  const data: { name?: string; email?: string; role?: "ADMIN" | "ASSISTANT_ADMIN" | "STUDENT"; password_hash?: string; student_number?: string | null; guardian_number?: string | null } = {};
+  const data: {
+    name?: string;
+    email?: string;
+    role?: "ADMIN" | "ASSISTANT_ADMIN" | "STUDENT";
+    password_hash?: string;
+    student_number?: string | null;
+    guardian_number?: string | null;
+    grade?: string | null;
+    study_type?: string | null;
+    governorate?: string | null;
+    copyright_code?: string | null;
+  } = {};
 
   if (body.name !== undefined && body.name.trim()) data.name = body.name.trim();
 
@@ -56,6 +86,36 @@ export async function PATCH(
 
   if (body.student_number !== undefined) data.student_number = body.student_number?.trim() || null;
   if (body.guardian_number !== undefined) data.guardian_number = body.guardian_number?.trim() || null;
+
+  if (body.grade !== undefined) {
+    data.grade = (body.grade ?? "").trim() || null;
+  }
+
+  if (body.study_type !== undefined) {
+    data.study_type = (body.study_type ?? "").trim() || null;
+  }
+
+  if (body.governorate !== undefined) {
+    data.governorate = (body.governorate ?? "").trim() || null;
+  }
+
+  if (body.copyright_code !== undefined) {
+    const code = (body.copyright_code ?? "").trim().toUpperCase();
+    if (!code) {
+      data.copyright_code = null;
+    } else {
+      if (!/^[A-Z0-9]{4,10}$/.test(code)) {
+        return NextResponse.json(
+          { error: "كود حقوق الطبع والنشر يجب أن يكون 4–10 أحرف/أرقام إنجليزية" },
+          { status: 400 },
+        );
+      }
+      if (await isCopyrightCodeTakenByOther(code, id)) {
+        return NextResponse.json({ error: "كود حقوق الطبع والنشر مستخدم لحساب آخر" }, { status: 400 });
+      }
+      data.copyright_code = code;
+    }
+  }
 
   if (Object.keys(data).length === 0) {
     return NextResponse.json({ error: "لا يوجد شيء للتحديث" }, { status: 400 });

@@ -20,6 +20,11 @@ export interface User {
   teacher_homepage_order?: number | null;
   /** كود حقوق الطبع والنشر — للطلاب فقط، فريد، يظهر على مشغّل الحصص */
   copyright_code?: string | null;
+  grade?: string | null;
+  division?: string | null;
+  studyType?: string | null;
+  study_type?: string | null;
+  governorate?: string | null;
   current_session_id?: string | null;
   created_at: Date;
   updated_at: Date;

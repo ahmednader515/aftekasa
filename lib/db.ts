@@ -426,8 +426,33 @@ export async function ensureCopyrightCodeColumn(): Promise<void> {
   });
 }
 
+/** أعمدة بيانات التسجيل (صف / قسم / نوع دراسة / محافظة) على المخطط الحديث */
+export async function ensureSignupProfileColumns(): Promise<void> {
+  return ensureOnce("ensureSignupProfileColumns", async () => {
+    if ((await detectSchemaMode(sql)) === "legacy") return;
+    try {
+      await sql`ALTER TABLE "User" ADD COLUMN IF NOT EXISTS grade TEXT`;
+      await sql`ALTER TABLE "User" ADD COLUMN IF NOT EXISTS division TEXT`;
+      await sql`ALTER TABLE "User" ADD COLUMN IF NOT EXISTS study_type TEXT`;
+      await sql`ALTER TABLE "User" ADD COLUMN IF NOT EXISTS governorate TEXT`;
+    } catch {
+      /* */
+    }
+  });
+}
+
 async function copyrightCodeTaken(code: string): Promise<boolean> {
   const rows = await sql`SELECT 1 FROM "User" WHERE copyright_code = ${code} LIMIT 1`;
+  return rows.length > 0;
+}
+
+/** هل الكود مستخدم لحساب آخر غير excludeUserId */
+export async function isCopyrightCodeTakenByOther(code: string, excludeUserId: string): Promise<boolean> {
+  const rows = await sql`
+    SELECT 1 FROM "User"
+    WHERE copyright_code = ${code} AND id != ${excludeUserId}
+    LIMIT 1
+  `;
   return rows.length > 0;
 }
 
@@ -510,13 +535,35 @@ export async function createUser(data: {
     await ensureTeacherAccountDbSchema();
   }
   await ensureCopyrightCodeColumn().catch(() => {});
+  await ensureSignupProfileColumns().catch(() => {});
   const studentCopyright =
     (data.role ?? "STUDENT") === "STUDENT" ? await allocateUniqueCopyrightCode() : null;
+  const hasSignupProfile =
+    data.grade !== undefined ||
+    data.division !== undefined ||
+    data.study_type !== undefined ||
+    data.governorate !== undefined;
   try {
-    await sql`
-      INSERT INTO "User" (id, email, password_hash, name, role, student_number, guardian_number, teacher_subject, teacher_avatar_url, copyright_code)
-      VALUES (${id}, ${data.email}, ${data.password_hash}, ${data.name}, ${data.role ?? "STUDENT"}, ${data.student_number ?? null}, ${data.guardian_number ?? null}, ${data.teacher_subject ?? null}, ${data.teacher_avatar_url ?? null}, ${studentCopyright})
-    `;
+    if (hasSignupProfile) {
+      await sql`
+        INSERT INTO "User" (
+          id, email, password_hash, name, role, student_number, guardian_number,
+          teacher_subject, teacher_avatar_url, copyright_code,
+          grade, division, study_type, governorate
+        )
+        VALUES (
+          ${id}, ${data.email}, ${data.password_hash}, ${data.name}, ${data.role ?? "STUDENT"},
+          ${data.student_number ?? null}, ${data.guardian_number ?? null},
+          ${data.teacher_subject ?? null}, ${data.teacher_avatar_url ?? null}, ${studentCopyright},
+          ${data.grade ?? null}, ${data.division ?? null}, ${data.study_type ?? null}, ${data.governorate ?? null}
+        )
+      `;
+    } else {
+      await sql`
+        INSERT INTO "User" (id, email, password_hash, name, role, student_number, guardian_number, teacher_subject, teacher_avatar_url, copyright_code)
+        VALUES (${id}, ${data.email}, ${data.password_hash}, ${data.name}, ${data.role ?? "STUDENT"}, ${data.student_number ?? null}, ${data.guardian_number ?? null}, ${data.teacher_subject ?? null}, ${data.teacher_avatar_url ?? null}, ${studentCopyright})
+      `;
+    }
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     const missingTeacherCols =
@@ -525,10 +572,24 @@ export async function createUser(data: {
       (msg.includes("column") && msg.includes("does not exist") && msg.includes("teacher"));
     if (missingTeacherCols) {
       usedFallbackInsertWithoutTeacherCols = true;
-      await sql`
-        INSERT INTO "User" (id, email, password_hash, name, role, student_number, guardian_number, copyright_code)
-        VALUES (${id}, ${data.email}, ${data.password_hash}, ${data.name}, ${data.role ?? "STUDENT"}, ${data.student_number ?? null}, ${data.guardian_number ?? null}, ${studentCopyright})
-      `;
+      if (hasSignupProfile) {
+        await sql`
+          INSERT INTO "User" (
+            id, email, password_hash, name, role, student_number, guardian_number, copyright_code,
+            grade, division, study_type, governorate
+          )
+          VALUES (
+            ${id}, ${data.email}, ${data.password_hash}, ${data.name}, ${data.role ?? "STUDENT"},
+            ${data.student_number ?? null}, ${data.guardian_number ?? null}, ${studentCopyright},
+            ${data.grade ?? null}, ${data.division ?? null}, ${data.study_type ?? null}, ${data.governorate ?? null}
+          )
+        `;
+      } else {
+        await sql`
+          INSERT INTO "User" (id, email, password_hash, name, role, student_number, guardian_number, copyright_code)
+          VALUES (${id}, ${data.email}, ${data.password_hash}, ${data.name}, ${data.role ?? "STUDENT"}, ${data.student_number ?? null}, ${data.guardian_number ?? null}, ${studentCopyright})
+        `;
+      }
     } else {
       throw e;
     }
@@ -541,19 +602,14 @@ export async function createUser(data: {
       /* أعمدة المدرس غير متوفرة بعد */
     });
   }
-  if (
-    data.grade !== undefined ||
-    data.division !== undefined ||
-    data.study_type !== undefined ||
-    data.governorate !== undefined
-  ) {
+  if (hasSignupProfile) {
     try {
       await sql`
         UPDATE "User"
         SET
           grade = ${data.grade ?? null},
           division = ${data.division ?? null},
-          "studyType" = ${data.study_type ?? null},
+          study_type = ${data.study_type ?? null},
           governorate = ${data.governorate ?? null},
           updated_at = NOW()
         WHERE id = ${id}
@@ -565,7 +621,7 @@ export async function createUser(data: {
           SET
             grade = ${data.grade ?? null},
             division = ${data.division ?? null},
-            study_type = ${data.study_type ?? null},
+            "studyType" = ${data.study_type ?? null},
             governorate = ${data.governorate ?? null},
             updated_at = NOW()
           WHERE id = ${id}
@@ -592,6 +648,11 @@ export async function updateUser(
     guardian_number?: string | null;
     teacher_subject?: string | null;
     teacher_avatar_url?: string | null;
+    grade?: string | null;
+    division?: string | null;
+    study_type?: string | null;
+    governorate?: string | null;
+    copyright_code?: string | null;
   }
 ): Promise<void> {
   if ((await detectSchemaMode(sql)) === "legacy") {
@@ -601,8 +662,20 @@ export async function updateUser(
     if (data.password_hash !== undefined) await sql`UPDATE "User" SET "hashedPassword" = ${data.password_hash}, "updatedAt" = NOW() WHERE id = ${id}`;
     if (data.student_number !== undefined) await sql`UPDATE "User" SET "phoneNumber" = ${data.student_number}, "updatedAt" = NOW() WHERE id = ${id}`;
     if (data.guardian_number !== undefined) await sql`UPDATE "User" SET "parentPhoneNumber" = ${data.guardian_number}, "updatedAt" = NOW() WHERE id = ${id}`;
+    if (data.grade !== undefined) await sql`UPDATE "User" SET grade = ${data.grade}, "updatedAt" = NOW() WHERE id = ${id}`;
+    if (data.division !== undefined) await sql`UPDATE "User" SET division = ${data.division}, "updatedAt" = NOW() WHERE id = ${id}`;
+    if (data.study_type !== undefined) {
+      try {
+        await sql`UPDATE "User" SET "studyType" = ${data.study_type}, "updatedAt" = NOW() WHERE id = ${id}`;
+      } catch {
+        await sql`UPDATE "User" SET study_type = ${data.study_type}, "updatedAt" = NOW() WHERE id = ${id}`;
+      }
+    }
+    if (data.governorate !== undefined) await sql`UPDATE "User" SET governorate = ${data.governorate}, "updatedAt" = NOW() WHERE id = ${id}`;
     return;
   }
+  await ensureSignupProfileColumns().catch(() => {});
+  await ensureCopyrightCodeColumn().catch(() => {});
   if (data.name !== undefined) await sql`UPDATE "User" SET name = ${data.name}, updated_at = NOW() WHERE id = ${id}`;
   if (data.email !== undefined) await sql`UPDATE "User" SET email = ${data.email}, updated_at = NOW() WHERE id = ${id}`;
   if (data.role !== undefined) await sql`UPDATE "User" SET role = ${data.role}, updated_at = NOW() WHERE id = ${id}`;
@@ -610,6 +683,19 @@ export async function updateUser(
   if (data.password_hash !== undefined) await sql`UPDATE "User" SET password_hash = ${data.password_hash}, updated_at = NOW() WHERE id = ${id}`;
   if (data.student_number !== undefined) await sql`UPDATE "User" SET student_number = ${data.student_number}, updated_at = NOW() WHERE id = ${id}`;
   if (data.guardian_number !== undefined) await sql`UPDATE "User" SET guardian_number = ${data.guardian_number}, updated_at = NOW() WHERE id = ${id}`;
+  if (data.grade !== undefined) await sql`UPDATE "User" SET grade = ${data.grade}, updated_at = NOW() WHERE id = ${id}`;
+  if (data.division !== undefined) await sql`UPDATE "User" SET division = ${data.division}, updated_at = NOW() WHERE id = ${id}`;
+  if (data.study_type !== undefined) {
+    try {
+      await sql`UPDATE "User" SET study_type = ${data.study_type}, updated_at = NOW() WHERE id = ${id}`;
+    } catch {
+      await sql`UPDATE "User" SET "studyType" = ${data.study_type}, updated_at = NOW() WHERE id = ${id}`;
+    }
+  }
+  if (data.governorate !== undefined) await sql`UPDATE "User" SET governorate = ${data.governorate}, updated_at = NOW() WHERE id = ${id}`;
+  if (data.copyright_code !== undefined) {
+    await sql`UPDATE "User" SET copyright_code = ${data.copyright_code}, updated_at = NOW() WHERE id = ${id}`;
+  }
   if (data.teacher_subject !== undefined) {
     try {
       await sql`UPDATE "User" SET teacher_subject = ${data.teacher_subject}, updated_at = NOW() WHERE id = ${id}`;
@@ -6836,8 +6922,15 @@ export async function getUsersByRole(role: UserRole): Promise<User[]> {
     `;
     return (rows as Record<string, unknown>[]).map((r) => mapLegacyUserRow(r));
   }
+  await ensureSignupProfileColumns().catch(() => {});
   const rows = await sql`SELECT * FROM "User" WHERE role = ${role} ORDER BY created_at DESC`;
-  return rows as User[];
+  return (rows as Record<string, unknown>[]).map((row) => ({
+    ...(row as unknown as User),
+    studyType:
+      (row.studyType as string | null | undefined) ??
+      (row.study_type as string | null | undefined) ??
+      null,
+  }));
 }
 
 /** حذف حساب مدرس — يتحقق من الرتبة قبل الحذف (دوراته تبقى مع created_by_id = null إن كان القيد كذلك في قاعدة البيانات) */
@@ -7126,4 +7219,130 @@ export async function createMessage(data: {
   await sql`UPDATE "Conversation" SET updated_at = NOW() WHERE id = ${data.conversation_id}`;
   const rows = await sql`SELECT * FROM "Message" WHERE id = ${id} LIMIT 1`;
   return rowToCamel(rows[0] as Record<string, unknown>) as Message;
+}
+
+/** جدول قراءة المحادثات لإشعارات الرسائل غير المقروءة */
+export async function ensureConversationReadTable(): Promise<void> {
+  return ensureOnce("ensureConversationReadTable", async () => {
+    try {
+      await sql`
+        CREATE TABLE IF NOT EXISTS "ConversationRead" (
+          conversation_id TEXT NOT NULL REFERENCES "Conversation"(id) ON DELETE CASCADE,
+          user_id         TEXT NOT NULL REFERENCES "User"(id) ON DELETE CASCADE,
+          last_read_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          PRIMARY KEY (conversation_id, user_id)
+        )
+      `;
+      await sql`CREATE INDEX IF NOT EXISTS "ConversationRead_user_id_idx" ON "ConversationRead"(user_id)`;
+    } catch {
+      /* */
+    }
+  });
+}
+
+/** تعليم محادثة كمقروءة للموظف الحالي */
+export async function markConversationReadForUser(conversationId: string, userId: string): Promise<void> {
+  await ensureConversationReadTable();
+  await sql`
+    INSERT INTO "ConversationRead" (conversation_id, user_id, last_read_at)
+    VALUES (${conversationId}, ${userId}, NOW())
+    ON CONFLICT (conversation_id, user_id)
+    DO UPDATE SET last_read_at = NOW()
+  `;
+}
+
+export type UnreadMessageNotification = {
+  conversationId: string;
+  studentId: string;
+  studentName: string;
+  preview: string;
+  unreadCount: number;
+  latestAt: Date;
+};
+
+/** عدد وإشعارات رسائل الطلاب غير المقروءة للموظف (أدمن/مساعد/مدرس) */
+export async function getUnreadStudentMessageNotifications(
+  userId: string,
+  role: UserRole,
+): Promise<{ count: number; items: UnreadMessageNotification[] }> {
+  await ensureConversationReadTable();
+
+  const isPlatformStaff = PLATFORM_STAFF_ROLES.includes(role as (typeof PLATFORM_STAFF_ROLES)[number]);
+  if (!isPlatformStaff && role !== "TEACHER") {
+    return { count: 0, items: [] };
+  }
+
+  const rows = isPlatformStaff
+    ? await sql`
+        WITH platform_conversations AS (
+          SELECT DISTINCT ON (c.student_user_id)
+            c.id,
+            c.student_user_id
+          FROM "Conversation" c
+          JOIN "User" s ON s.id = c.staff_user_id
+          WHERE s.role IN ('ADMIN', 'ASSISTANT_ADMIN')
+          ORDER BY c.student_user_id,
+            (SELECT count(*)::int FROM "Message" m WHERE m.conversation_id = c.id) DESC,
+            c.updated_at DESC
+        )
+        SELECT
+          pc.id AS conversation_id,
+          pc.student_user_id AS student_id,
+          u.name AS student_name,
+          COUNT(m.id)::int AS unread_count,
+          MAX(m.created_at) AS latest_at,
+          (
+            SELECT COALESCE(NULLIF(TRIM(m2.content), ''), m2.file_name, m2.message_type)
+            FROM "Message" m2
+            WHERE m2.conversation_id = pc.id AND m2.sender_id = pc.student_user_id
+            ORDER BY m2.created_at DESC
+            LIMIT 1
+          ) AS preview
+        FROM platform_conversations pc
+        JOIN "User" u ON u.id = pc.student_user_id
+        JOIN "Message" m ON m.conversation_id = pc.id AND m.sender_id = pc.student_user_id
+        LEFT JOIN "ConversationRead" r
+          ON r.conversation_id = pc.id AND r.user_id = ${userId}
+        WHERE r.last_read_at IS NULL OR m.created_at > r.last_read_at
+        GROUP BY pc.id, pc.student_user_id, u.name
+        ORDER BY latest_at DESC
+        LIMIT 20
+      `
+    : await sql`
+        SELECT
+          c.id AS conversation_id,
+          c.student_user_id AS student_id,
+          u.name AS student_name,
+          COUNT(m.id)::int AS unread_count,
+          MAX(m.created_at) AS latest_at,
+          (
+            SELECT COALESCE(NULLIF(TRIM(m2.content), ''), m2.file_name, m2.message_type)
+            FROM "Message" m2
+            WHERE m2.conversation_id = c.id AND m2.sender_id = c.student_user_id
+            ORDER BY m2.created_at DESC
+            LIMIT 1
+          ) AS preview
+        FROM "Conversation" c
+        JOIN "User" u ON u.id = c.student_user_id
+        JOIN "Message" m ON m.conversation_id = c.id AND m.sender_id = c.student_user_id
+        LEFT JOIN "ConversationRead" r
+          ON r.conversation_id = c.id AND r.user_id = ${userId}
+        WHERE c.staff_user_id = ${userId}
+          AND (r.last_read_at IS NULL OR m.created_at > r.last_read_at)
+        GROUP BY c.id, c.student_user_id, u.name
+        ORDER BY latest_at DESC
+        LIMIT 20
+      `;
+
+  const items: UnreadMessageNotification[] = (rows as Record<string, unknown>[]).map((r) => ({
+    conversationId: String(r.conversation_id),
+    studentId: String(r.student_id),
+    studentName: String(r.student_name ?? ""),
+    preview: String(r.preview ?? ""),
+    unreadCount: Number(r.unread_count ?? 0),
+    latestAt: r.latest_at as Date,
+  }));
+
+  const count = items.reduce((sum, item) => sum + item.unreadCount, 0);
+  return { count, items };
 }

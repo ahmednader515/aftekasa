@@ -33,10 +33,12 @@ export function MessagesView({
   isStaff,
   userId,
   userName,
+  initialConversationId = null,
 }: {
   isStaff: boolean;
   userId: string;
   userName: string;
+  initialConversationId?: string | null;
 }) {
   const t = useT();
   const locale = useLocale();
@@ -73,7 +75,15 @@ export function MessagesView({
   useEffect(() => {
     fetch("/api/messages/conversations")
       .then((r) => r.json())
-      .then((data) => setConversations(Array.isArray(data) ? data : []))
+      .then((data) => {
+        const list = Array.isArray(data) ? data : [];
+        setConversations(list);
+        const deepLink = initialConversationId?.trim();
+        if (deepLink && list.some((c: ConversationItem) => c.id === deepLink)) {
+          setSelectedConversationId(deepLink);
+          setSelectedStudentId(null);
+        }
+      })
       .catch(() => setConversations([]))
       .finally(() => setLoading(false));
     if (isStaff) {
@@ -87,7 +97,7 @@ export function MessagesView({
         .then((data) => setStaffList(Array.isArray(data) ? data : []))
         .catch(() => setStaffList([]));
     }
-  }, [isStaff]);
+  }, [isStaff, initialConversationId]);
 
   useEffect(() => {
     if (!selectedConversationId) {

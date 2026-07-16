@@ -30,6 +30,12 @@ export const enMessages: Messages = {
     platformSubscriptionActive: "You are subscribed to the platform subscription",
     endsAt: "Expires at:",
     active: "Active",
+    messageNotifications: "Student message notifications",
+    unreadMessagesCount: "{count} unread",
+    noUnreadMessages: "No new student messages",
+    openMessages: "Open messages",
+    studentFallback: "Student",
+    messageAttachment: "Attachment",
   },
   theme: {
     lightMode: "Light mode",

@@ -5,6 +5,7 @@ import { useSession, signOut } from "next-auth/react";
 import { useState, useRef, useEffect } from "react";
 import type { UserRole } from "@/lib/types";
 import { LanguageToggle } from "@/components/LanguageToggle";
+import { MessageNotifications } from "@/components/MessageNotifications";
 import { useT, useLocalizedEnumValue } from "@/components/LocaleProvider";
 
 function UserIcon({ className }: { className?: string }) {
@@ -184,6 +185,7 @@ export function Header({
             <LanguageToggle />
           </div>
           <div className="flex shrink-0 items-center gap-1">
+            <MessageNotifications compact />
             <AuthActions status={status} session={session} compact />
           </div>
         </div>
@@ -237,6 +239,7 @@ export function Header({
             >
               {t("common.courses", "Courses")}
             </Link>
+            <MessageNotifications />
             <AuthActions status={status} session={session} />
           </nav>
         </div>
