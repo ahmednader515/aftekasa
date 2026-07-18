@@ -851,6 +851,7 @@ export const arMessages: Messages = {
       staffFallbackAdmin: "الإدارة",
       staffSideLabel: "{name}",
       defaultStudentName: "طالب",
+      unreadDotTitle: "رسائل غير مقروءة",
     },
     reviewsManage: {
       loading: "جاري التحميل...",
@@ -1034,6 +1035,7 @@ export const arMessages: Messages = {
       lessonTitlePlaceholder: `عنوان الحصة`,
       youtubePlaceholder: `رابط فيديو يوتيوب`,
       lessonPdfOptional: `ملف PDF للحصة (اختياري)`,
+      lessonPdfMaxSize: `الحد الأقصى لحجم الملف: 50 ميجابايت`,
       viewPdf: `عرض الملف`,
       choosePdfUpload: `اختر ملف PDF`,
       uploadingPdf: `جاري الرفع...`,
@@ -1043,6 +1045,7 @@ export const arMessages: Messages = {
       homeworkMaterialsHelp: "ارفع ملفات PDF أو صور تظهر للطالب مع الواجب.",
       homeworkUploadPdf: "رفع PDF للواجب",
       homeworkUploadImage: "رفع صورة للواجب",
+      homeworkUploadSizeHint: "PDF حتى 50 ميجابايت — الصور حتى 15 ميجابايت",
       homeworkExplanationVideoLabel: "فيديو شرح الواجب (يوتيوب)",
       homeworkExplanationVideoHelp: "يظهر للطالب فقط بعد تسليم الواجب.",
       addLessonBtn: `+ إضافة حصة`,

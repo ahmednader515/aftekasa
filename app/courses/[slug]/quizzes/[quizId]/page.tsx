@@ -30,8 +30,7 @@ function decodeSegment(s: string): string {
 
 function courseSeg(course: { slug?: string | null; id: string }): string {
   const s = course.slug && course.slug.trim() ? String(course.slug).trim() : "";
-  const normalized = s ? s.replace(/-+$/, "").replace(/^-+/, "") : "";
-  return normalized ? encodeURIComponent(normalized) : course.id;
+  return s ? encodeURIComponent(s) : course.id;
 }
 
 function lessonHref(

@@ -731,30 +731,35 @@ export function EditCourseForm({
                     <button type="button" onClick={() => updateLesson(i, "pdfUrl", "")} className="text-sm text-red-600 hover:underline">{t(`${Cf}.remove`)}</button>
                   </div>
                 ) : (
-                  <label className="mt-1 inline-block cursor-pointer rounded-[var(--radius-btn)] border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm">
-                    {pdfUploading === i ? t(`${Cf}.uploadingPdf`) : t(`${Cf}.choosePdfUpload`)}
-                    <input
-                      type="file"
-                      accept="application/pdf"
-                      className="hidden"
-                      disabled={pdfUploading !== null}
-                      onChange={async (e) => {
-                        const f = e.target.files?.[0];
-                        if (!f) return;
-                        setPdfUploading(i);
-                        try {
-                          const fd = new FormData();
-                          fd.set("file", f);
-                          const res = await fetch("/api/upload/pdf", { method: "POST", body: fd });
-                          const data = await res.json().catch(() => ({}));
-                          if (res.ok && data.url) updateLesson(i, "pdfUrl", data.url);
-                        } finally {
-                          setPdfUploading(null);
-                          e.target.value = "";
-                        }
-                      }}
-                    />
-                  </label>
+                  <>
+                    <label className="mt-1 inline-block cursor-pointer rounded-[var(--radius-btn)] border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm">
+                      {pdfUploading === i ? t(`${Cf}.uploadingPdf`) : t(`${Cf}.choosePdfUpload`)}
+                      <input
+                        type="file"
+                        accept="application/pdf"
+                        className="hidden"
+                        disabled={pdfUploading !== null}
+                        onChange={async (e) => {
+                          const f = e.target.files?.[0];
+                          if (!f) return;
+                          setPdfUploading(i);
+                          try {
+                            const fd = new FormData();
+                            fd.set("file", f);
+                            const res = await fetch("/api/upload/pdf", { method: "POST", body: fd });
+                            const data = await res.json().catch(() => ({}));
+                            if (res.ok && data.url) updateLesson(i, "pdfUrl", data.url);
+                          } finally {
+                            setPdfUploading(null);
+                            e.target.value = "";
+                          }
+                        }}
+                      />
+                    </label>
+                    <p className="mt-1 text-xs text-[var(--color-muted)]">
+                      {t(`${Cf}.lessonPdfMaxSize`, "Maximum file size: 50 MB")}
+                    </p>
+                  </>
                 )}
               </div>
               <textarea value={lesson.content} onChange={(e) => updateLesson(i, "content", e.target.value)} placeholder={t(`${Cf}.notesPlaceholder`)} rows={2} className="w-full rounded-[var(--radius-btn)] border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm" />
@@ -773,6 +778,10 @@ export function EditCourseForm({
                   uploadImage: t(`${Cf}.homeworkUploadImage`, "Upload homework image"),
                   uploading: t(`${Cf}.uploadingPdf`),
                   remove: t(`${Cf}.remove`),
+                  uploadSizeHint: t(
+                    `${Cf}.homeworkUploadSizeHint`,
+                    "PDF up to 50 MB — images up to 15 MB",
+                  ),
                   explanationVideoLabel: t(`${Cf}.homeworkExplanationVideoLabel`, "Homework explanation video (YouTube)"),
                   explanationVideoHelp: t(
                     `${Cf}.homeworkExplanationVideoHelp`,

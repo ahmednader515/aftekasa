@@ -18,6 +18,7 @@ type Props = {
     uploadImage: string;
     uploading: string;
     remove: string;
+    uploadSizeHint?: string;
     explanationVideoLabel: string;
     explanationVideoHelp: string;
     explanationVideoPlaceholder: string;
@@ -105,6 +106,9 @@ export function LessonHomeworkAssignmentFields({
                 />
               </label>
             </div>
+            {labels.uploadSizeHint ? (
+              <p className="mt-1.5 text-xs text-[var(--color-muted)]">{labels.uploadSizeHint}</p>
+            ) : null}
             {materials.length > 0 ? (
               <ul className="mt-2 space-y-1">
                 {materials.map((m, idx) => (

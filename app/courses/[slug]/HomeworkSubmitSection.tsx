@@ -192,6 +192,9 @@ export function HomeworkSubmitSection({ courseId }: { courseId: string }) {
           <label className="block text-sm font-medium text-[var(--color-foreground)]">
             {mode === "pdf" ? "رفع ملف PDF" : "رفع صورة"}
           </label>
+          <p className="mt-0.5 text-xs text-[var(--color-muted)]">
+            {mode === "pdf" ? "الحد الأقصى: 50 ميجابايت" : "الحد الأقصى: 15 ميجابايت"}
+          </p>
           <input
             type="file"
             accept={mode === "pdf" ? "application/pdf" : "image/jpeg,image/png,image/webp,image/gif"}

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { setStoreFeatureEnabled } from "@/lib/db";
+import { PUBLIC_CACHE_TAGS, revalidatePublicCache } from "@/lib/public-data-cache";
 
 export async function PATCH(request: NextRequest) {
   const session = await getServerSession(authOptions);
@@ -19,6 +20,7 @@ export async function PATCH(request: NextRequest) {
   }
   try {
     await setStoreFeatureEnabled(body.enabled);
+    revalidatePublicCache(PUBLIC_CACHE_TAGS.homepage, PUBLIC_CACHE_TAGS.store);
   } catch (e) {
     console.error("store-enabled PATCH", e);
     return NextResponse.json(

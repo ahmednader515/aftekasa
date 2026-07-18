@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { updateHomepageSettings } from "@/lib/db";
+import { PUBLIC_CACHE_TAGS, revalidatePublicCache } from "@/lib/public-data-cache";
 
 const TITLE_MAX = 200;
 const DESC_MAX = 2000;
@@ -27,6 +28,7 @@ export async function PATCH(request: NextRequest) {
       store_section_title: titleRaw.slice(0, TITLE_MAX),
       store_section_description: descRaw.length > 0 ? descRaw.slice(0, DESC_MAX) : null,
     });
+    revalidatePublicCache(PUBLIC_CACHE_TAGS.homepage, PUBLIC_CACHE_TAGS.store);
   } catch (e) {
     console.error("store-home-section PATCH", e);
     return NextResponse.json(

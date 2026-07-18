@@ -2,9 +2,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { uploadToR2, isR2Configured, getMissingR2EnvVars } from "@/lib/r2";
+import { MAX_IMAGE_BYTES, MAX_IMAGE_MB, MAX_PDF_BYTES, MAX_PDF_MB } from "@/lib/upload-limits";
 
-const MAX_PDF = 10 * 1024 * 1024;
-const MAX_IMAGE = 5 * 1024 * 1024;
+const MAX_PDF = MAX_PDF_BYTES;
+const MAX_IMAGE = MAX_IMAGE_BYTES;
 const PDF_TYPE = "application/pdf";
 const IMAGE_TYPES = ["image/jpeg", "image/png", "image/webp", "image/gif"];
 
@@ -45,10 +46,10 @@ export async function POST(request: NextRequest) {
   }
 
   if (isPdf && file.size > MAX_PDF) {
-    return NextResponse.json({ error: "حجم الملف أكبر من 10 ميجابايت" }, { status: 400 });
+    return NextResponse.json({ error: `حجم الملف أكبر من ${MAX_PDF_MB} ميجابايت` }, { status: 400 });
   }
   if (isImage && file.size > MAX_IMAGE) {
-    return NextResponse.json({ error: "حجم الصورة أكبر من 5 ميجابايت" }, { status: 400 });
+    return NextResponse.json({ error: `حجم الصورة أكبر من ${MAX_IMAGE_MB} ميجابايت` }, { status: 400 });
   }
 
   const ext = file.name.split(".").pop()?.toLowerCase() || (isPdf ? "pdf" : "jpg");

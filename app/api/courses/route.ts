@@ -18,6 +18,7 @@ import {
 } from "@/lib/save-course-quizzes";
 import { revalidatePublicCache, PUBLIC_CACHE_TAGS } from "@/lib/public-data-cache";
 import { serializeHomeworkMaterials, parseHomeworkMaterials } from "@/lib/homework-materials";
+import { normalizeCourseSlug, buildLessonSlug } from "@/lib/course-slug";
 
 export async function GET() {
   try {
@@ -82,14 +83,14 @@ export async function POST(request: NextRequest) {
 
   const titleAr = (body.titleAr ?? body.title)?.trim();
   const titleEn = (body.titleEn ?? titleAr)?.trim();
-  const slug = body.slug?.trim();
+  const slug = normalizeCourseSlug(body.slug ?? "") || normalizeCourseSlug(titleEn || titleAr || "");
   const descriptionAr = (body.descriptionAr ?? body.description)?.trim();
   const descriptionEn = (body.descriptionEn ?? descriptionAr)?.trim();
   if (!titleAr || !slug || !descriptionAr) {
     return NextResponse.json({ error: "العنوان والوصف بالعربية مطلوبة" }, { status: 400 });
   }
 
-  const exists = await courseExistsBySlug(slug.trim());
+  const exists = await courseExistsBySlug(slug);
   if (exists) {
     return NextResponse.json({ error: "رابط الدورة مستخدم مسبقاً" }, { status: 400 });
   }
@@ -183,7 +184,7 @@ export async function POST(request: NextRequest) {
 
   for (let i = 0; i < lessons.length; i++) {
     const le = lessons[i];
-    const lessonSlug = `${slug.trim()}-${i + 1}`.replace(/\s+/g, "-");
+    const lessonSlug = buildLessonSlug(slug, i + 1);
     const order = contentOrder.findIndex((e) => e.type === "lesson" && e.index === i);
     const orderVal = order >= 0 ? order : i;
     await createLesson({

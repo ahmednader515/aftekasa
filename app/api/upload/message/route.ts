@@ -2,8 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { uploadToR2, isR2Configured, getMissingR2EnvVars } from "@/lib/r2";
+import { MAX_MESSAGE_FILE_BYTES, MAX_MESSAGE_FILE_MB } from "@/lib/upload-limits";
 
-const MAX_FILE = 10 * 1024 * 1024; // 10 MB
+const MAX_FILE = MAX_MESSAGE_FILE_BYTES;
 const IMAGE_TYPES = ["image/jpeg", "image/png", "image/webp", "image/gif"];
 const ALLOWED_EXT = ["pdf", "jpg", "jpeg", "png", "webp", "gif", "doc", "docx", "xls", "xlsx"];
 
@@ -45,7 +46,7 @@ export async function POST(request: NextRequest) {
   }
 
   if (file.size > MAX_FILE) {
-    return NextResponse.json({ error: "حجم الملف أكبر من 10 ميجابايت" }, { status: 400 });
+    return NextResponse.json({ error: `حجم الملف أكبر من ${MAX_MESSAGE_FILE_MB} ميجابايت` }, { status: 400 });
   }
 
   const safeExt = ALLOWED_EXT.includes(ext) ? ext : "bin";

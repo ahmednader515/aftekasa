@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { getHomepageSettings, updateHomepageSettings } from "@/lib/db";
+import { PUBLIC_CACHE_TAGS, revalidatePublicCache } from "@/lib/public-data-cache";
 
 type CopyrightOverlayStyle = "floating" | "watermark";
 
@@ -44,6 +45,7 @@ export async function PUT(request: NextRequest) {
     await updateHomepageSettings({
       copyright_overlay_style: style,
     });
+    revalidatePublicCache(PUBLIC_CACHE_TAGS.homepage);
     return NextResponse.json({ success: true });
   } catch {
     return NextResponse.json({ error: "فشل حفظ الإعدادات" }, { status: 500 });

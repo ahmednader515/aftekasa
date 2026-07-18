@@ -1,4 +1,4 @@
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import Link from "next/link";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
@@ -11,6 +11,7 @@ import {
   getHomepageSettings,
   isLessonCompleteForUser,
   hasHomeworkSubmissionForLesson,
+  getCourseIdByLessonSlug,
 } from "@/lib/db";
 import { LessonWatchShell } from "@/components/LessonWatchShell";
 import { VideoCopyrightOverlay } from "@/components/video-copyright-overlay";
@@ -49,8 +50,7 @@ function courseHref(course: { slug?: string | null; id: string }): string {
 
 function courseSeg(course: { slug?: string | null; id: string }): string {
   const s = (course.slug && course.slug.trim()) ? String(course.slug).trim() : "";
-  const normalized = s ? s.replace(/-+$/, "").replace(/^-+/, "") : "";
-  return normalized ? encodeURIComponent(normalized) : (course as { id: string }).id;
+  return s ? encodeURIComponent(s) : (course as { id: string }).id;
 }
 
 function lessonHref(course: { slug?: string | null; id: string }, lesson: { slug?: string | null; id: string }): string {
@@ -74,7 +74,23 @@ export default async function LessonPage({ params }: Props) {
   const lessonDecoded = decodeSegment(lessonSegment);
   const session = await getServerSession(authOptions);
 
-  const data = await getCourseWithContent(courseDecoded);
+  let data = await getCourseWithContent(courseDecoded);
+  let lesson =
+    data?.course && data.lessons
+      ? isLessonId(lessonDecoded)
+        ? data.lessons.find((l: Record<string, unknown>) => l.id === lessonDecoded)
+        : data.lessons.find((l: Record<string, unknown>) => l.slug === lessonDecoded)
+      : undefined;
+
+  // إذا وُجدت الحصة تحت دورة أخرى (مثلاً slug الدورة ينتهي بشرطة وحُذفت من الرابط)
+  if (!lesson && !isLessonId(lessonDecoded)) {
+    const ownerCourseId = await getCourseIdByLessonSlug(lessonDecoded);
+    if (ownerCourseId) {
+      data = await getCourseWithContent(ownerCourseId);
+      lesson = data?.lessons.find((l: Record<string, unknown>) => l.slug === lessonDecoded);
+    }
+  }
+
   if (!data?.course) notFound();
 
   const course = data.course as unknown as Record<string, unknown> & { id: string; slug?: string | null; lessons: Record<string, unknown>[]; quizzes?: Array<Record<string, unknown> & { _count?: { questions?: number } }> };
@@ -101,10 +117,13 @@ export default async function LessonPage({ params }: Props) {
     isStaff || isEnrolled || hasFullStudentAccess || allowedLessonIds.length > 0;
   if (!canAccessCourse) notFound();
 
-  const lesson = isLessonId(lessonDecoded)
-    ? data.lessons.find((l: Record<string, unknown>) => l.id === lessonDecoded)
-    : data.lessons.find((l: Record<string, unknown>) => l.slug === lessonDecoded);
   if (!lesson) notFound();
+
+  // صحّح الرابط إذا كان slug الدورة في العنوان لا يطابق الدورة الفعلية للحصة
+  const canonicalCourseSeg = course.slug?.trim() || course.id;
+  if (courseDecoded !== canonicalCourseSeg && courseDecoded !== course.id) {
+    redirect(lessonHref(course, lesson as { slug?: string | null; id: string }));
+  }
 
   const lessonObj = lesson as Record<string, unknown>;
   const lessonId = String(lessonObj.id ?? lesson.id);

@@ -29,6 +29,12 @@ type MessageItem = {
 
 type StudentItem = { id: string; name: string; email: string };
 
+type UnreadItem = {
+  conversationId: string;
+  studentId: string;
+  unreadCount: number;
+};
+
 export function MessagesView({
   isStaff,
   userId,
@@ -61,6 +67,7 @@ export function MessagesView({
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [studentSearch, setStudentSearch] = useState("");
   const [staffList, setStaffList] = useState<StaffItem[]>([]);
+  const [unreadByStudentId, setUnreadByStudentId] = useState<Record<string, number>>({});
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesScrollRef = useRef<HTMLDivElement>(null);
 
@@ -71,6 +78,31 @@ export function MessagesView({
           (s.name || "").toLowerCase().includes(studentSearch.trim().toLowerCase()) ||
           (s.email || "").toLowerCase().includes(studentSearch.trim().toLowerCase())
       );
+
+  const sortedStudents = [...filteredStudents].sort((a, b) => {
+    const ua = unreadByStudentId[a.id] ?? 0;
+    const ub = unreadByStudentId[b.id] ?? 0;
+    if (ua > 0 && ub === 0) return -1;
+    if (ua === 0 && ub > 0) return 1;
+    return (a.name || a.email).localeCompare(b.name || b.email, "ar");
+  });
+
+  async function refreshUnread() {
+    if (!isStaff) return;
+    try {
+      const res = await fetch("/api/messages/unread", { credentials: "include" });
+      if (!res.ok) return;
+      const data = await res.json();
+      const items = Array.isArray(data.items) ? (data.items as UnreadItem[]) : [];
+      const map: Record<string, number> = {};
+      for (const item of items) {
+        if (item.studentId) map[item.studentId] = Number(item.unreadCount ?? 0);
+      }
+      setUnreadByStudentId(map);
+    } catch {
+      /* تجاهل */
+    }
+  }
 
   useEffect(() => {
     fetch("/api/messages/conversations")
@@ -91,12 +123,16 @@ export function MessagesView({
         .then((r) => r.json())
         .then((data) => setStudents(Array.isArray(data) ? data : []))
         .catch(() => setStudents([]));
+      void refreshUnread();
+      const id = window.setInterval(() => void refreshUnread(), 25_000);
+      return () => window.clearInterval(id);
     } else {
       fetch("/api/messages/staff")
         .then((r) => r.json())
         .then((data) => setStaffList(Array.isArray(data) ? data : []))
         .catch(() => setStaffList([]));
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isStaff, initialConversationId]);
 
   useEffect(() => {
@@ -107,9 +143,24 @@ export function MessagesView({
     setMessagesLoading(true);
     fetch(`/api/messages/conversations/${selectedConversationId}`)
       .then((r) => r.json())
-      .then((data) => setMessages(Array.isArray(data.messages) ? data.messages : []))
+      .then((data) => {
+        setMessages(Array.isArray(data.messages) ? data.messages : []);
+        const studentId =
+          (data.conversation?.studentUserId as string | undefined) ??
+          conversations.find((c) => c.id === selectedConversationId)?.studentUserId;
+        if (studentId) {
+          setUnreadByStudentId((prev) => {
+            if (!(studentId in prev)) return prev;
+            const next = { ...prev };
+            delete next[studentId];
+            return next;
+          });
+        }
+        void refreshUnread();
+      })
       .catch(() => setMessages([]))
       .finally(() => setMessagesLoading(false));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedConversationId]);
 
   useEffect(() => {
@@ -271,18 +322,40 @@ export function MessagesView({
               className="mb-3 w-full rounded-[var(--radius-btn)] border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2 text-sm placeholder:text-[var(--color-muted)]"
             />
             <ul className="max-h-[420px] space-y-1 overflow-y-auto">
-              {filteredStudents.map((s) => (
-                <li key={s.id}>
-                  <button
-                    type="button"
-                    onClick={() => openChatWithStudent(s.id)}
-                    disabled={sending}
-                    className={`w-full rounded-[var(--radius-btn)] px-3 py-2 text-right text-sm ${selectedStudentId === s.id || conversations.find((c) => c.id === selectedConversationId)?.studentUserId === s.id ? "bg-[var(--color-primary)]/20 text-[var(--color-primary)]" : "hover:bg-[var(--color-background)]"}`}
-                  >
-                    {s.name || s.email}
-                  </button>
-                </li>
-              ))}
+              {sortedStudents.map((s) => {
+                const unread = unreadByStudentId[s.id] ?? 0;
+                const isActive =
+                  selectedStudentId === s.id ||
+                  conversations.find((c) => c.id === selectedConversationId)?.studentUserId === s.id;
+                return (
+                  <li key={s.id}>
+                    <button
+                      type="button"
+                      onClick={() => openChatWithStudent(s.id)}
+                      disabled={sending}
+                      className={`flex w-full items-center gap-2 rounded-[var(--radius-btn)] px-3 py-2 text-right text-sm ${
+                        isActive
+                          ? "bg-[var(--color-primary)]/20 text-[var(--color-primary)]"
+                          : "hover:bg-[var(--color-background)]"
+                      }`}
+                    >
+                      {unread > 0 ? (
+                        <span
+                          className="relative inline-flex h-2.5 w-2.5 shrink-0"
+                          title={t(`${V}.unreadDotTitle`, "Unread messages")}
+                          aria-label={t(`${V}.unreadDotTitle`, "Unread messages")}
+                        >
+                          <span className="absolute inset-0 rounded-full bg-[var(--color-primary)] opacity-40" />
+                          <span className="relative m-auto h-2 w-2 rounded-full bg-[var(--color-primary)]" />
+                        </span>
+                      ) : null}
+                      <span className={`min-w-0 flex-1 truncate ${unread > 0 ? "font-semibold" : "font-medium"}`}>
+                        {s.name || s.email}
+                      </span>
+                    </button>
+                  </li>
+                );
+              })}
               {students.length === 0 && !loading && <p className="text-sm text-[var(--color-muted)]">{t(`${V}.noStudents`)}</p>}
               {students.length > 0 && filteredStudents.length === 0 && <p className="text-sm text-[var(--color-muted)]">{t(`${V}.noSearchResultsStaff`)}</p>}
             </ul>

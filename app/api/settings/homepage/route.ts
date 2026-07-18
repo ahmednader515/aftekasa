@@ -8,9 +8,6 @@ export async function GET() {
     return NextResponse.json(settings);
   } catch (error) {
     console.error("API settings/homepage:", error);
-    return NextResponse.json(
-      { teacherImageUrl: "/instructor.png", heroTitle: "أستاذ / عصام محي", heroSlogan: "ادرسها... يمكن تفهم المعلومة صح!", platformName: "منصة أستاذ عصام محي" },
-      { status: 200 }
-    );
+    return NextResponse.json({ error: "فشل جلب إعدادات الصفحة الرئيسية" }, { status: 503 });
   }
 }

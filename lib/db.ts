@@ -77,13 +77,19 @@ export const sql = neon(connectionString);
  * Many pages call "ensure schema" helpers during render.
  * On remote DBs (e.g. Neon), repeating `ALTER TABLE ... IF NOT EXISTS` on every request is very slow.
  * We memoize each ensure() so it runs once per server process.
+ * If an ensure fails, clear the memo so a later request can retry (do not keep a rejected Promise forever).
  */
 const ensureOnceMap = new Map<string, Promise<void>>();
 function ensureOnce(key: string, fn: () => Promise<void>): Promise<void> {
   const existing = ensureOnceMap.get(key);
   if (existing) return existing;
   const p = (async () => {
-    await fn();
+    try {
+      await fn();
+    } catch (e) {
+      ensureOnceMap.delete(key);
+      throw e;
+    }
   })();
   ensureOnceMap.set(key, p);
   return p;
@@ -1854,26 +1860,42 @@ export async function getTeacherIdsExcludedFromPublicCourseLists(): Promise<Set<
   }
 }
 
-async function getHomepageSettingsUncached(): Promise<HomepageSetting> {
+async function ensureHomepageSchemaBestEffort(): Promise<void> {
+  await Promise.allSettled([
+    ensureHomepageHeroTemplateColumns(),
+    ensureHomepageHeroSliderCourseIdColumns(),
+    ensureHomepageReviewsSectionCopyColumns(),
+    ensureHomepageHeroCustomBgColumns(),
+    ensureAddBalanceSettingsColumns(),
+    ensureHomepageStoreEnabledColumn(),
+    ensureHomepageStoreSectionCopyColumns(),
+    ensureHomepagePrimaryColorColumn(),
+    ensureHomepageHeaderLogoColumn(),
+    ensureHomepageTeamSupportLinksColumns(),
+    ensureHomepageCtaCopyColumns(),
+    ensureHomepageBilingualTextColumns(),
+    ensureHomepagePlatformDetailsColumns(),
+    ensureHomepagePlatformNewsColumns(),
+    ensureHomepageCopyrightOverlayColumns(),
+    ensureHomepageTeachersEnabledColumn(),
+    ensureHomepageSubscriptionsEnabledColumn(),
+  ]);
+}
+
+/** يضمن وجود صف id=default حتى لا تفشل تحديثات UPDATE الصامتة */
+async function ensureHomepageDefaultRow(): Promise<void> {
   try {
-    await ensureHomepageHeroTemplateColumns();
-    await ensureHomepageHeroSliderCourseIdColumns();
-    await ensureHomepageReviewsSectionCopyColumns();
-    await ensureHomepageHeroCustomBgColumns();
-    await ensureAddBalanceSettingsColumns();
-    await ensureHomepageStoreEnabledColumn();
-    await ensureHomepageStoreSectionCopyColumns();
-    await ensureHomepagePrimaryColorColumn();
-    await ensureHomepageHeaderLogoColumn();
-    await ensureHomepageTeamSupportLinksColumns();
-    await ensureHomepageCtaCopyColumns();
-    await ensureHomepageBilingualTextColumns();
-    await ensureHomepagePlatformDetailsColumns();
-    await ensureHomepagePlatformNewsColumns();
-    await ensureHomepageCopyrightOverlayColumns();
-    const rows = await sql`SELECT * FROM "HomepageSetting" WHERE id = 'default' LIMIT 1`;
-    const row = rows[0] as Record<string, unknown> | undefined;
-    if (!row) return HOMEPAGE_DEFAULTS;
+    await sql`
+      INSERT INTO "HomepageSetting" (id, updated_at)
+      VALUES ('default', NOW())
+      ON CONFLICT (id) DO NOTHING
+    `;
+  } catch (e) {
+    console.error("ensureHomepageDefaultRow:", e);
+  }
+}
+
+async function mapHomepageSettingsRow(row: Record<string, unknown>): Promise<HomepageSetting> {
     const c = rowToCamel(row) as Record<string, unknown>;
     /* أعمدة hero_float_image_1/2/3 تتحول إلى heroFloatImage_1 لا heroFloatImage1 فنقرأ من الصف الخام */
     const heroFloat1 = row.hero_float_image_1 != null && String(row.hero_float_image_1).trim() !== "" ? String(row.hero_float_image_1).trim() : null;
@@ -2404,19 +2426,49 @@ async function getHomepageSettingsUncached(): Promise<HomepageSetting> {
         return s === "watermark" ? "watermark" : "floating";
       })(),
     };
-  } catch {
-    return HOMEPAGE_DEFAULTS;
-  }
 }
 
+/**
+ * قراءة الإعدادات من DB مباشرة (بدون كاش).
+ * يرمي عند فشل الاتصال — لا يُرجع defaults هنا حتى لا تُخزَّن في unstable_cache.
+ */
+async function fetchHomepageSettingsFromDb(): Promise<HomepageSetting> {
+  await ensureHomepageSchemaBestEffort();
+  let rows = await sql`SELECT * FROM "HomepageSetting" WHERE id = 'default' LIMIT 1`;
+  let row = rows[0] as Record<string, unknown> | undefined;
+  if (!row) {
+    await ensureHomepageDefaultRow();
+    rows = await sql`SELECT * FROM "HomepageSetting" WHERE id = 'default' LIMIT 1`;
+    row = rows[0] as Record<string, unknown> | undefined;
+    if (!row) return HOMEPAGE_DEFAULTS;
+  }
+  return mapHomepageSettingsRow(row);
+}
+
+/**
+ * كاش عبر الطلبات — يُخزَّن فقط نجاح القراءة من DB.
+ * عند الخطأ نرمي حتى لا تُحفظ HOMEPAGE_DEFAULTS لمدة 60 ثانية في الإنتاج.
+ */
 const getHomepageSettingsCrossRequest = unstable_cache(
-  getHomepageSettingsUncached,
+  async () => fetchHomepageSettingsFromDb(),
   ["homepage-settings"],
   { revalidate: 60, tags: ["homepage-settings"] },
 );
 
 /** نفس الطلب (layout + metadata + الصفحة) يقرأ الإعدادات مرة واحدة فقط */
-export const getHomepageSettings = cache(async () => getHomepageSettingsCrossRequest());
+export const getHomepageSettings = cache(async () => {
+  try {
+    return await getHomepageSettingsCrossRequest();
+  } catch (cachedErr) {
+    console.error("getHomepageSettings: cached read failed, retrying uncached", cachedErr);
+    try {
+      return await fetchHomepageSettingsFromDb();
+    } catch (e) {
+      console.error("getHomepageSettings: uncached retry failed", e);
+      return HOMEPAGE_DEFAULTS;
+    }
+  }
+});
 
 function pickReviewsSectionString(
   row: Record<string, unknown>,
@@ -2550,19 +2602,8 @@ export async function updateHomepageSettings(data: {
   platform_news_section_title?: string | null;
   platform_news_section_title_en?: string | null;
 }): Promise<void> {
-  await ensureHomepageHeroTemplateColumns();
-  await ensureHomepageHeroSliderCourseIdColumns();
-  await ensureHomepageReviewsSectionCopyColumns();
-  await ensureHomepageHeroCustomBgColumns();
-  await ensureAddBalanceSettingsColumns();
-  await ensureHomepagePrimaryColorColumn();
-  await ensureHomepageHeaderLogoColumn();
-  await ensureHomepageTeamSupportLinksColumns();
-  await ensureHomepageCtaCopyColumns();
-  await ensureHomepageBilingualTextColumns();
-  await ensureHomepagePlatformDetailsColumns();
-  await ensureHomepagePlatformNewsColumns();
-  await ensureHomepageCopyrightOverlayColumns();
+  await ensureHomepageSchemaBestEffort();
+  await ensureHomepageDefaultRow();
   if (data.hero_template !== undefined) {
     await sql`UPDATE "HomepageSetting" SET hero_template = ${data.hero_template}, updated_at = NOW() WHERE id = 'default'`;
   }
@@ -4453,6 +4494,27 @@ export async function getLessonBySlug(courseId: string, lessonSlug: string): Pro
   }
   const rows = await sql`SELECT * FROM "Lesson" WHERE course_id = ${courseId} AND slug = ${lessonSlug} LIMIT 1`;
   return (rows[0] as Lesson) ?? null;
+}
+
+/** إيجاد معرّف الدورة من slug الحصة — لإصلاح روابط أُزيل منها شرطة زائدة من slug الدورة */
+export async function getCourseIdByLessonSlug(lessonSlug: string): Promise<string | null> {
+  if (!lessonSlug.trim()) return null;
+  if ((await detectSchemaMode(sql)) === "legacy") {
+    const rows = await sql`
+      SELECT "courseId" as course_id FROM "Chapter"
+      WHERE id = ${lessonSlug}
+      LIMIT 1
+    `;
+    const id = (rows[0] as { course_id?: string } | undefined)?.course_id;
+    return id ? String(id) : null;
+  }
+  const rows = await sql`
+    SELECT course_id FROM "Lesson"
+    WHERE slug = ${lessonSlug}
+    LIMIT 1
+  `;
+  const id = (rows[0] as { course_id?: string } | undefined)?.course_id;
+  return id ? String(id) : null;
 }
 
 export async function getLessonById(lessonId: string): Promise<Lesson | null> {

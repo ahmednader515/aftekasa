@@ -35,10 +35,10 @@ function decodeSlug(segment: string): string {
   }
 }
 
-/** توحيد الـ slug في الروابط (إزالة الشرطات الزائدة) ليتطابق مع صفحة الاختبار على Vercel */
+/** توحيد الـ slug في الروابط */
 function normalizeSlugForUrl(s: string | null | undefined): string {
   if (!s || !s.trim()) return "";
-  return s.trim().replace(/-+$/, "").replace(/^-+/, "");
+  return s.trim();
 }
 
 export async function generateMetadata({ params }: Props) {

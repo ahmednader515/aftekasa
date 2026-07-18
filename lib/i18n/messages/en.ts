@@ -767,6 +767,7 @@ export const enMessages: Messages = {
       staffFallbackAdmin: "Administration",
       staffSideLabel: "{name}",
       defaultStudentName: "Student",
+      unreadDotTitle: "Unread messages",
     },
     reviewsManage: {
       loading: "Loading...",
@@ -947,6 +948,7 @@ export const enMessages: Messages = {
       lessonTitlePlaceholder: `Lesson title`,
       youtubePlaceholder: `YouTube video URL`,
       lessonPdfOptional: `Lesson PDF (optional)`,
+      lessonPdfMaxSize: `Maximum file size: 50 MB`,
       viewPdf: `View PDF`,
       choosePdfUpload: `Choose PDF`,
       uploadingPdf: `Uploading...`,
@@ -956,6 +958,7 @@ export const enMessages: Messages = {
       homeworkMaterialsHelp: "Upload PDF or images the student should see for this homework.",
       homeworkUploadPdf: "Upload homework PDF",
       homeworkUploadImage: "Upload homework image",
+      homeworkUploadSizeHint: "PDF up to 50 MB — images up to 15 MB",
       homeworkExplanationVideoLabel: "Homework explanation video (YouTube)",
       homeworkExplanationVideoHelp: "Shown to the student only after they submit the homework.",
       addLessonBtn: `+ Add lesson`,
