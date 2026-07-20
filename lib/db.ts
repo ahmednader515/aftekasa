@@ -7317,6 +7317,10 @@ export type UnreadMessageNotification = {
   conversationId: string;
   studentId: string;
   studentName: string;
+  /** Filled for student-facing unread (messages from staff). */
+  staffId?: string;
+  staffName?: string;
+  staffRole?: string;
   preview: string;
   unreadCount: number;
   latestAt: Date;
@@ -7400,6 +7404,61 @@ export async function getUnreadStudentMessageNotifications(
     conversationId: String(r.conversation_id),
     studentId: String(r.student_id),
     studentName: String(r.student_name ?? ""),
+    preview: String(r.preview ?? ""),
+    unreadCount: Number(r.unread_count ?? 0),
+    latestAt: r.latest_at as Date,
+  }));
+
+  const count = items.reduce((sum, item) => sum + item.unreadCount, 0);
+  return { count, items };
+}
+
+/**
+ * Unread messages for a student: any message in their conversations not sent by them
+ * (admin / assistant / teacher) that is newer than their ConversationRead cursor.
+ */
+export async function getUnreadStaffMessageNotificationsForStudent(
+  studentUserId: string,
+): Promise<{ count: number; items: UnreadMessageNotification[] }> {
+  await ensureConversationReadTable();
+
+  const rows = await sql`
+    SELECT
+      c.id AS conversation_id,
+      c.student_user_id AS student_id,
+      su.name AS student_name,
+      c.staff_user_id AS staff_id,
+      st.name AS staff_name,
+      st.role AS staff_role,
+      COUNT(m.id)::int AS unread_count,
+      MAX(m.created_at) AS latest_at,
+      (
+        SELECT COALESCE(NULLIF(TRIM(m2.content), ''), m2.file_name, m2.message_type)
+        FROM "Message" m2
+        WHERE m2.conversation_id = c.id AND m2.sender_id <> ${studentUserId}
+        ORDER BY m2.created_at DESC
+        LIMIT 1
+      ) AS preview
+    FROM "Conversation" c
+    JOIN "User" su ON su.id = c.student_user_id
+    JOIN "User" st ON st.id = c.staff_user_id
+    JOIN "Message" m ON m.conversation_id = c.id AND m.sender_id <> ${studentUserId}
+    LEFT JOIN "ConversationRead" r
+      ON r.conversation_id = c.id AND r.user_id = ${studentUserId}
+    WHERE c.student_user_id = ${studentUserId}
+      AND (r.last_read_at IS NULL OR m.created_at > r.last_read_at)
+    GROUP BY c.id, c.student_user_id, su.name, c.staff_user_id, st.name, st.role
+    ORDER BY latest_at DESC
+    LIMIT 20
+  `;
+
+  const items: UnreadMessageNotification[] = (rows as Record<string, unknown>[]).map((r) => ({
+    conversationId: String(r.conversation_id),
+    studentId: String(r.student_id),
+    studentName: String(r.student_name ?? ""),
+    staffId: String(r.staff_id ?? ""),
+    staffName: String(r.staff_name ?? ""),
+    staffRole: String(r.staff_role ?? ""),
     preview: String(r.preview ?? ""),
     unreadCount: Number(r.unread_count ?? 0),
     latestAt: r.latest_at as Date,

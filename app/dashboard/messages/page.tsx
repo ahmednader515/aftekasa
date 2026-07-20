@@ -18,6 +18,7 @@ export default async function MessagesPage({
     session.user.role === "TEACHER";
   const isStudent = session.user.role === "STUDENT";
   if (!isStaff && !isStudent) redirect("/dashboard");
+  const canBulkMessage = isStaff;
   const t = await getServerTranslator();
   const params = await searchParams;
   const initialConversationId = typeof params.c === "string" ? params.c.trim() : null;
@@ -36,6 +37,7 @@ export default async function MessagesPage({
       </p>
       <MessagesView
         isStaff={isStaff}
+        canBulkMessage={canBulkMessage}
         userId={session.user.id}
         userName={session.user.name ?? ""}
         initialConversationId={initialConversationId}

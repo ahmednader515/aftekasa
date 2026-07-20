@@ -33,7 +33,12 @@ export async function GET(
 
   const messages = await getMessagesByConversationId(conversationId);
 
-  if (role === "ADMIN" || role === "ASSISTANT_ADMIN" || role === "TEACHER") {
+  if (
+    role === "ADMIN" ||
+    role === "ASSISTANT_ADMIN" ||
+    role === "TEACHER" ||
+    role === "STUDENT"
+  ) {
     await markConversationReadForUser(conversationId, session.user.id).catch(() => {});
   }
 

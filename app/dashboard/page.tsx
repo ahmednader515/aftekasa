@@ -14,11 +14,14 @@ import {
   listActiveSubscriptionPlansPublic,
   listActivePlatformSubscriptionsForUser,
   listStudentStorePurchases,
+  getUnreadStaffMessageNotificationsForStudent,
 } from "@/lib/db";
 import { getServerTranslator } from "@/lib/i18n/server";
+import { filterCoursesByStudentGrade, signupGradeToStageSlug } from "@/lib/grade-stages";
 import { MyCoursesSection } from "./MyCoursesSection";
 import { ActivateCodeSection } from "./ActivateCodeSection";
 import { StudentSubscriptionsPanel } from "./StudentSubscriptionsPanel";
+import { StudentInboxCard } from "./StudentInboxCard";
 
 export default async function DashboardPage() {
   const session = await getServerSession(authOptions);
@@ -147,8 +150,19 @@ export default async function DashboardPage() {
 
   if (isStudent) {
     const user = await getUserById(session.user.id);
-    const enrolledCourses = user ? await getAccessibleCoursesForUser(session.user.id) : [];
+    const accessibleCourses = user ? await getAccessibleCoursesForUser(session.user.id) : [];
+    const enrolledCourses = filterCoursesByStudentGrade(accessibleCourses, user?.grade);
+    const studentGradeSlug = signupGradeToStageSlug(user?.grade);
+    const coursesBrowseHref = studentGradeSlug
+      ? `/courses?category=${encodeURIComponent(studentGradeSlug)}`
+      : "/courses";
     const balance = user ? Number(user.balance) : 0;
+    const inboxUnread = user
+      ? await getUnreadStaffMessageNotificationsForStudent(session.user.id).catch(() => ({
+          count: 0,
+          items: [],
+        }))
+      : { count: 0, items: [] };
 
     let subscriptionsFeature = false;
     let subscriptionPlansForStudent: Awaited<ReturnType<typeof listActiveSubscriptionPlansPublic>> = [];
@@ -200,7 +214,7 @@ export default async function DashboardPage() {
               )}
             </p>
             <Link
-              href="/courses"
+              href={coursesBrowseHref}
               className="inline-flex rounded-[var(--radius-btn)] bg-[var(--color-primary)] px-4 py-2 text-sm font-medium text-white transition hover:bg-[var(--color-primary-hover)]"
             >
               {t("dashboard.page.viewCoursesButton", "View courses")}
@@ -210,23 +224,7 @@ export default async function DashboardPage() {
 
         <div className="grid gap-6 sm:grid-cols-2">
           <ActivateCodeSection />
-          <Link
-            href="/dashboard/messages"
-            className="flex flex-col justify-center rounded-[var(--radius-card)] border border-[var(--color-border)] bg-[var(--color-surface)] p-6 shadow-[var(--shadow-card)] text-center transition hover:border-[var(--color-primary)]/30"
-          >
-            <h2 className="text-lg font-semibold text-[var(--color-foreground)]">
-              {t("dashboard.page.inboxTitle", "Inbox")}
-            </h2>
-            <p className="mt-2 text-sm text-[var(--color-muted)]">
-              {t(
-                "dashboard.page.inboxDesc",
-                "Messages and conversations from admin or your teacher",
-              )}
-            </p>
-            <span className="mt-4 inline-flex w-fit rounded-[var(--radius-btn)] bg-[var(--color-primary)] px-5 py-2.5 text-base font-medium text-white transition hover:bg-[var(--color-primary-hover)]">
-              {t("dashboard.page.openMessagesButton", "Open messages")}
-            </span>
-          </Link>
+          <StudentInboxCard initialUnreadCount={inboxUnread.count} />
         </div>
 
         {subscriptionsFeature ? (
@@ -287,7 +285,7 @@ export default async function DashboardPage() {
           </section>
         ) : null}
 
-        <MyCoursesSection courses={enrolledCourses} />
+        <MyCoursesSection courses={enrolledCourses} browseHref={coursesBrowseHref} />
       </div>
     );
   }

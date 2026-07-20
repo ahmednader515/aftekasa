@@ -36,11 +36,34 @@ export const GRADE_STAGES = [
     shortLabel: "الصف الثاني الثانوي",
     order: 5,
   },
+  {
+    slug: "sec-3",
+    nameAr: "الصف الثالث الثانوي",
+    nameEn: "Secondary 3",
+    shortLabel: "الصف الثالث الثانوي",
+    order: 6,
+  },
 ] as const;
 
 export type GradeStageSlug = (typeof GRADE_STAGES)[number]["slug"];
 
 export const GRADE_STAGE_SLUGS: readonly GradeStageSlug[] = GRADE_STAGES.map((s) => s.slug);
+
+/**
+ * Maps `User.grade` (signup / admin strings) → course category slug.
+ * Includes aliases for secondary grades (signup uses short names; categories use "الصف …").
+ */
+const SIGNUP_GRADE_TO_STAGE_SLUG: Record<string, GradeStageSlug> = {
+  "الصف الأول الاعدادي": "prep-1",
+  "الصف الثاني الاعدادي": "prep-2",
+  "الصف الثالث الاعدادي": "prep-3",
+  "الأول الثانوي": "sec-1",
+  "الصف الأول الثانوي": "sec-1",
+  "الثاني الثانوي": "sec-2",
+  "الصف الثاني الثانوي": "sec-2",
+  "الثالث الثانوي": "sec-3",
+  "الصف الثالث الثانوي": "sec-3",
+};
 
 export function isGradeStageSlug(slug: string | null | undefined): slug is GradeStageSlug {
   if (!slug?.trim()) return false;
@@ -50,4 +73,49 @@ export function isGradeStageSlug(slug: string | null | undefined): slug is Grade
 export function getGradeStageBySlug(slug: string | null | undefined) {
   if (!slug?.trim()) return null;
   return GRADE_STAGES.find((s) => s.slug === slug.trim()) ?? null;
+}
+
+/** Resolve a student's stored grade string to the matching grade-stage category slug. */
+export function signupGradeToStageSlug(grade: string | null | undefined): GradeStageSlug | null {
+  if (!grade?.trim()) return null;
+  return SIGNUP_GRADE_TO_STAGE_SLUG[grade.trim()] ?? null;
+}
+
+function courseCategorySlug(
+  course: {
+    category?: { slug?: string | null; nameAr?: string | null; name_ar?: string | null } | null;
+    level?: string | null;
+    grade?: string | null;
+  },
+): string | null {
+  const fromCategory = course.category?.slug?.trim();
+  if (fromCategory) return fromCategory;
+
+  const nameAr = (course.category?.nameAr ?? course.category?.name_ar ?? "").trim();
+  if (nameAr) {
+    const byName = SIGNUP_GRADE_TO_STAGE_SLUG[nameAr];
+    if (byName) return byName;
+  }
+
+  const levelOrGrade = (course.level ?? course.grade ?? "").trim();
+  if (levelOrGrade) {
+    return SIGNUP_GRADE_TO_STAGE_SLUG[levelOrGrade] ?? null;
+  }
+  return null;
+}
+
+/**
+ * Keep only courses whose category matches the student's grade.
+ * If the student has no resolvable grade, returns the list unchanged.
+ */
+export function filterCoursesByStudentGrade<
+  T extends {
+    category?: { slug?: string | null; nameAr?: string | null; name_ar?: string | null } | null;
+    level?: string | null;
+    grade?: string | null;
+  },
+>(courses: T[], grade: string | null | undefined): T[] {
+  const slug = signupGradeToStageSlug(grade);
+  if (!slug) return courses;
+  return courses.filter((c) => courseCategorySlug(c) === slug);
 }

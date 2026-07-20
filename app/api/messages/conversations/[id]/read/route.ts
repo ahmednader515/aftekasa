@@ -19,7 +19,12 @@ export async function POST(
   }
 
   const role = session.user.role as UserRole;
-  if (role !== "ADMIN" && role !== "ASSISTANT_ADMIN" && role !== "TEACHER") {
+  if (
+    role !== "ADMIN" &&
+    role !== "ASSISTANT_ADMIN" &&
+    role !== "TEACHER" &&
+    role !== "STUDENT"
+  ) {
     return NextResponse.json({ error: "غير مصرح" }, { status: 403 });
   }
 

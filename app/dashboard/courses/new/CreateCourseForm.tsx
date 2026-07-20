@@ -18,6 +18,8 @@ import { QuestionImageField } from "../QuestionImageField";
 import { LessonHomeworkAssignmentFields } from "../LessonHomeworkAssignmentFields";
 import type { HomeworkMaterial } from "@/lib/homework-materials";
 import { GRADE_STAGE_SLUGS, isGradeStageSlug } from "@/lib/grade-stages";
+import { uploadWithProgress } from "@/lib/upload-with-progress";
+import { UploadProgressBar } from "@/components/UploadProgressBar";
 
 type CreateContentOrderEntry = { type: "lesson"; index: number } | { type: "quiz"; index: number };
 
@@ -95,6 +97,8 @@ export function CreateCourseForm({
   const [imageUploading, setImageUploading] = useState(false);
   const [imageUploadError, setImageUploadError] = useState("");
   const [pdfUploading, setPdfUploading] = useState<number | null>(null);
+  const [pdfUploadProgress, setPdfUploadProgress] = useState(0);
+  const [pdfUploadPhase, setPdfUploadPhase] = useState<"uploading" | "processing">("uploading");
 
   function slugify(s: string) {
     return s
@@ -633,7 +637,7 @@ export function CreateCourseForm({
                 ) : (
                   <>
                     <label className="mt-1 inline-block cursor-pointer rounded-[var(--radius-btn)] border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm">
-                      {pdfUploading === i ? t(`${Cf}.uploadingPdf`) : t(`${Cf}.choosePdfUpload`)}
+                      {t(`${Cf}.choosePdfUpload`)}
                       <input
                         type="file"
                         accept="application/pdf"
@@ -643,19 +647,37 @@ export function CreateCourseForm({
                           const f = e.target.files?.[0];
                           if (!f) return;
                           setPdfUploading(i);
+                          setPdfUploadProgress(0);
+                          setPdfUploadPhase("uploading");
                           try {
-                            const fd = new FormData();
-                            fd.set("file", f);
-                            const res = await fetch("/api/upload/pdf", { method: "POST", body: fd });
-                            const data = await res.json().catch(() => ({}));
-                            if (res.ok && data.url) updateLesson(i, "pdfUrl", data.url);
+                            const { ok, data } = await uploadWithProgress(
+                              "/api/upload/pdf",
+                              f,
+                              (state) => {
+                                setPdfUploadProgress(state.percent);
+                                setPdfUploadPhase(state.phase);
+                              },
+                            );
+                            if (ok && data.url) updateLesson(i, "pdfUrl", String(data.url));
                           } finally {
                             setPdfUploading(null);
+                            setPdfUploadProgress(0);
+                            setPdfUploadPhase("uploading");
                             e.target.value = "";
                           }
                         })}
                       />
                     </label>
+                    {pdfUploading === i ? (
+                      <UploadProgressBar
+                        percent={pdfUploadProgress}
+                        label={
+                          pdfUploadPhase === "processing"
+                            ? t(`${Cf}.savingUpload`, "جاري الحفظ...")
+                            : t(`${Cf}.uploadingPdf`)
+                        }
+                      />
+                    ) : null}
                     <p className="mt-1 text-xs text-[var(--color-muted)]">
                       {t(`${Cf}.lessonPdfMaxSize`, "Maximum file size: 50 MB")}
                     </p>

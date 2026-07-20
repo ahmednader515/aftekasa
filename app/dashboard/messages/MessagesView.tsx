@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef } from "react";
 import { useLocale, useT } from "@/components/LocaleProvider";
 import { dateLocaleForUi } from "@/lib/i18n/dashboard-table";
+import { fillMessage } from "@/lib/i18n/interpolate";
 
 type ConversationItem = {
   id: string;
@@ -32,16 +33,19 @@ type StudentItem = { id: string; name: string; email: string };
 type UnreadItem = {
   conversationId: string;
   studentId: string;
+  staffId?: string | null;
   unreadCount: number;
 };
 
 export function MessagesView({
   isStaff,
+  canBulkMessage = false,
   userId,
   userName,
   initialConversationId = null,
 }: {
   isStaff: boolean;
+  canBulkMessage?: boolean;
   userId: string;
   userName: string;
   initialConversationId?: string | null;
@@ -50,6 +54,7 @@ export function MessagesView({
   const locale = useLocale();
   const V = "dashboard.messagesView";
   const dateLocale = dateLocaleForUi(locale);
+  const dir = locale === "ar" ? "rtl" : "ltr";
 
   function roleLabel(role: string) {
     return t(`header.role.${role}`, role);
@@ -68,6 +73,12 @@ export function MessagesView({
   const [studentSearch, setStudentSearch] = useState("");
   const [staffList, setStaffList] = useState<StaffItem[]>([]);
   const [unreadByStudentId, setUnreadByStudentId] = useState<Record<string, number>>({});
+  const [unreadByConversationId, setUnreadByConversationId] = useState<Record<string, number>>({});
+  const [bulkOpen, setBulkOpen] = useState(false);
+  const [bulkText, setBulkText] = useState("");
+  const [bulkSending, setBulkSending] = useState(false);
+  const [bulkError, setBulkError] = useState<string | null>(null);
+  const [bulkResult, setBulkResult] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesScrollRef = useRef<HTMLDivElement>(null);
 
@@ -87,18 +98,38 @@ export function MessagesView({
     return (a.name || a.email).localeCompare(b.name || b.email, "ar");
   });
 
+  function isPlatformStaffRole(role: string | undefined): boolean {
+    return role === "ADMIN" || role === "ASSISTANT_ADMIN";
+  }
+
+  function conversationForStaff(staffId: string, staffRole?: string): ConversationItem | undefined {
+    const direct = conversations.find((c) => c.staffUserId === staffId);
+    if (direct) return direct;
+    if (isPlatformStaffRole(staffRole)) {
+      return conversations.find((c) => isPlatformStaffRole(c.staffRole));
+    }
+    return undefined;
+  }
+
   async function refreshUnread() {
-    if (!isStaff) return;
     try {
       const res = await fetch("/api/messages/unread", { credentials: "include" });
       if (!res.ok) return;
       const data = await res.json();
       const items = Array.isArray(data.items) ? (data.items as UnreadItem[]) : [];
-      const map: Record<string, number> = {};
-      for (const item of items) {
-        if (item.studentId) map[item.studentId] = Number(item.unreadCount ?? 0);
+      if (isStaff) {
+        const map: Record<string, number> = {};
+        for (const item of items) {
+          if (item.studentId) map[item.studentId] = Number(item.unreadCount ?? 0);
+        }
+        setUnreadByStudentId(map);
+      } else {
+        const map: Record<string, number> = {};
+        for (const item of items) {
+          if (item.conversationId) map[item.conversationId] = Number(item.unreadCount ?? 0);
+        }
+        setUnreadByConversationId(map);
       }
-      setUnreadByStudentId(map);
     } catch {
       /* تجاهل */
     }
@@ -131,6 +162,9 @@ export function MessagesView({
         .then((r) => r.json())
         .then((data) => setStaffList(Array.isArray(data) ? data : []))
         .catch(() => setStaffList([]));
+      void refreshUnread();
+      const id = window.setInterval(() => void refreshUnread(), 25_000);
+      return () => window.clearInterval(id);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isStaff, initialConversationId]);
@@ -156,6 +190,12 @@ export function MessagesView({
             return next;
           });
         }
+        setUnreadByConversationId((prev) => {
+          if (!(selectedConversationId in prev)) return prev;
+          const next = { ...prev };
+          delete next[selectedConversationId];
+          return next;
+        });
         void refreshUnread();
       })
       .catch(() => setMessages([]))
@@ -215,7 +255,8 @@ export function MessagesView({
   }
 
   async function openChatWithStaff(staffId: string) {
-    const existing = conversations.find((c) => c.staffUserId === staffId);
+    const staff = staffList.find((s) => s.id === staffId);
+    const existing = conversationForStaff(staffId, staff?.role);
     if (existing) {
       setSelectedConversationId(existing.id);
       return;
@@ -256,6 +297,63 @@ export function MessagesView({
       if (msg.id) setMessages((prev) => [...prev, msg]);
     } finally {
       setSending(false);
+    }
+  }
+
+  function openBulkModal() {
+    setBulkOpen(true);
+    setBulkText("");
+    setBulkError(null);
+    setBulkResult(null);
+  }
+
+  function closeBulkModal() {
+    if (bulkSending) return;
+    setBulkOpen(false);
+    setBulkText("");
+    setBulkError(null);
+    setBulkResult(null);
+  }
+
+  async function sendBulkMessage() {
+    const trimmed = bulkText.trim();
+    if (!trimmed) {
+      setBulkError(t(`${V}.bulkEmptyError`));
+      return;
+    }
+    if (students.length === 0) {
+      setBulkError(t(`${V}.bulkNoStudents`));
+      return;
+    }
+    if (bulkSending) return;
+    setBulkSending(true);
+    setBulkError(null);
+    setBulkResult(null);
+    try {
+      const res = await fetch("/api/messages/bulk", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ content: trimmed }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setBulkError(typeof data.error === "string" ? data.error : t(`${V}.bulkFailed`));
+        return;
+      }
+      const sent = Number(data.sent ?? 0);
+      const failed = Number(data.failed ?? 0);
+      const total = Number(data.total ?? 0);
+      if (failed > 0) {
+        setBulkResult(fillMessage(t(`${V}.bulkPartialFail`), { sent, failed }));
+      } else {
+        setBulkResult(fillMessage(t(`${V}.bulkSuccess`), { sent, total }));
+      }
+      setBulkText("");
+    } catch {
+      setBulkError(t(`${V}.bulkFailed`));
+    } finally {
+      setBulkSending(false);
     }
   }
 
@@ -313,7 +411,19 @@ export function MessagesView({
       <div className="rounded-[var(--radius-card)] border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
         {isStaff ? (
           <>
-            <h3 className="mb-3 font-medium text-[var(--color-foreground)]">{t(`${V}.studentsHeading`)}</h3>
+            <div className="mb-3 flex items-center justify-between gap-2">
+              <h3 className="font-medium text-[var(--color-foreground)]">{t(`${V}.studentsHeading`)}</h3>
+              {canBulkMessage ? (
+                <button
+                  type="button"
+                  onClick={openBulkModal}
+                  disabled={bulkSending || students.length === 0}
+                  className="shrink-0 rounded-[var(--radius-btn)] border border-[var(--color-border)] px-2.5 py-1 text-xs font-medium text-[var(--color-foreground)] hover:bg-[var(--color-background)] disabled:opacity-50"
+                >
+                  {t(`${V}.bulkOpenBtn`)}
+                </button>
+              ) : null}
+            </div>
             <input
               type="search"
               value={studentSearch}
@@ -368,17 +478,39 @@ export function MessagesView({
             ) : (
               <ul className="space-y-1">
                 {staffList.map((s) => {
-                  const conv = conversations.find((c) => c.staffUserId === s.id);
+                  const conv = conversationForStaff(s.id, s.role);
                   const label = roleLabel(s.role);
+                  const unread = conv ? (unreadByConversationId[conv.id] ?? 0) : 0;
                   return (
                     <li key={s.id}>
                       <button
                         type="button"
                         onClick={() => (conv ? selectConversation(conv.id) : openChatWithStaff(s.id))}
                         disabled={sending}
-                        className={`w-full rounded-[var(--radius-btn)] px-3 py-2 text-right text-sm ${selectedConversationId === conv?.id ? "bg-[var(--color-primary)]/20 text-[var(--color-primary)]" : "hover:bg-[var(--color-background)]"}`}
+                        className={`flex w-full items-center gap-2 rounded-[var(--radius-btn)] px-3 py-2 text-right text-sm ${
+                          selectedConversationId === conv?.id
+                            ? "bg-[var(--color-primary)]/20 text-[var(--color-primary)]"
+                            : "hover:bg-[var(--color-background)]"
+                        }`}
                       >
-                        {label}
+                        {unread > 0 ? (
+                          <span
+                            className="relative inline-flex h-2.5 w-2.5 shrink-0"
+                            title={t(`${V}.unreadDotTitle`, "Unread messages")}
+                            aria-label={t(`${V}.unreadDotTitle`, "Unread messages")}
+                          >
+                            <span className="absolute inset-0 rounded-full bg-[var(--color-primary)] opacity-40" />
+                            <span className="relative m-auto h-2 w-2 rounded-full bg-[var(--color-primary)]" />
+                          </span>
+                        ) : null}
+                        <span className={`min-w-0 flex-1 truncate ${unread > 0 ? "font-semibold" : "font-medium"}`}>
+                          {label}
+                        </span>
+                        {unread > 1 ? (
+                          <span className="shrink-0 rounded-full bg-[var(--color-primary)]/15 px-1.5 py-0.5 text-[10px] font-semibold text-[var(--color-primary)]">
+                            {unread}
+                          </span>
+                        ) : null}
                       </button>
                     </li>
                   );
@@ -495,6 +627,62 @@ export function MessagesView({
           </>
         )}
       </div>
+
+      {bulkOpen ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div
+            dir={dir}
+            className="w-full max-w-lg rounded-[var(--radius-card)] border border-[var(--color-border)] bg-[var(--color-surface)] p-6 shadow-lg"
+          >
+            <h3 className="text-lg font-semibold text-[var(--color-foreground)]">
+              {t(`${V}.bulkModalTitle`)}
+            </h3>
+            <p className="mt-2 text-sm text-[var(--color-muted)]">{t(`${V}.bulkModalHelp`)}</p>
+            {bulkError ? (
+              <p className="mt-3 text-sm text-red-600 dark:text-red-400">{bulkError}</p>
+            ) : null}
+            {bulkResult ? (
+              <p className="mt-3 text-sm text-green-700 dark:text-green-400">{bulkResult}</p>
+            ) : null}
+            <div className="mt-4">
+              <label className="block text-sm font-medium text-[var(--color-foreground)]">
+                {t(`${V}.bulkMessageLabel`)}
+              </label>
+              <textarea
+                value={bulkText}
+                onChange={(e) => setBulkText(e.target.value)}
+                rows={5}
+                disabled={bulkSending}
+                placeholder={t(`${V}.bulkMessagePlaceholder`)}
+                className="mt-1 w-full rounded-[var(--radius-btn)] border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2 text-sm disabled:opacity-60"
+              />
+              <p className="mt-1 text-xs text-[var(--color-muted)]">
+                {students.length > 0
+                  ? fillMessage(t(`${V}.bulkRecipientCount`), { count: students.length })
+                  : t(`${V}.bulkNoStudents`)}
+              </p>
+            </div>
+            <div className="mt-5 flex flex-wrap justify-end gap-2">
+              <button
+                type="button"
+                onClick={closeBulkModal}
+                disabled={bulkSending}
+                className="rounded-[var(--radius-btn)] border border-[var(--color-border)] px-4 py-2 text-sm disabled:opacity-50"
+              >
+                {t(`${V}.bulkCancel`)}
+              </button>
+              <button
+                type="button"
+                onClick={() => void sendBulkMessage()}
+                disabled={bulkSending || !bulkText.trim() || students.length === 0}
+                className="rounded-[var(--radius-btn)] bg-[var(--color-primary)] px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+              >
+                {bulkSending ? t(`${V}.bulkSending`) : t(`${V}.bulkConfirm`)}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

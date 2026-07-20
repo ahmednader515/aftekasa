@@ -13,6 +13,9 @@ type UnreadItem = {
   conversationId: string;
   studentId: string;
   studentName: string;
+  staffId?: string | null;
+  staffName?: string | null;
+  staffRole?: string | null;
   preview: string;
   unreadCount: number;
   latestAt: string;
@@ -53,7 +56,8 @@ export function MessageNotifications({ compact = false }: { compact?: boolean })
   const ref = useRef<HTMLDivElement>(null);
 
   const role = session?.user?.role as UserRole | undefined;
-  const enabled = status === "authenticated" && isStaffRole(role);
+  const isStudent = role === "STUDENT";
+  const enabled = status === "authenticated" && (isStaffRole(role) || isStudent);
 
   const refresh = useCallback(async () => {
     if (!enabled) return;
@@ -91,6 +95,22 @@ export function MessageNotifications({ compact = false }: { compact?: boolean })
   if (!enabled) return null;
 
   const badgeLabel = count > 99 ? "99+" : String(count);
+  const titleKey = isStudent
+    ? "header.studentMessageNotifications"
+    : "header.messageNotifications";
+  const titleFallback = isStudent ? "Message notifications" : "Student message notifications";
+  const emptyKey = isStudent ? "header.noUnreadStaffMessages" : "header.noUnreadMessages";
+  const emptyFallback = isStudent ? "No new messages" : "No new student messages";
+
+  function itemTitle(item: UnreadItem): string {
+    if (isStudent) {
+      if (item.staffRole) {
+        return t(`header.role.${item.staffRole}`, item.staffRole);
+      }
+      return item.staffName || t("header.staffFallback", "Admin");
+    }
+    return item.studentName || t("header.studentFallback", "Student");
+  }
 
   return (
     <div className="relative" ref={ref}>
@@ -103,8 +123,8 @@ export function MessageNotifications({ compact = false }: { compact?: boolean })
         className={`relative inline-flex items-center justify-center rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-foreground)] transition hover:bg-[var(--color-border)]/50 ${
           compact ? "h-8 w-8" : "h-10 w-10"
         }`}
-        aria-label={t("header.messageNotifications", "Student message notifications")}
-        title={t("header.messageNotifications", "Student message notifications")}
+        aria-label={t(titleKey, titleFallback)}
+        title={t(titleKey, titleFallback)}
       >
         <BellIcon className={compact ? "h-4 w-4" : "h-5 w-5"} />
         {count > 0 ? (
@@ -118,20 +138,20 @@ export function MessageNotifications({ compact = false }: { compact?: boolean })
         <div className="absolute end-0 top-full z-50 mt-2 w-[min(100vw-1.5rem,20rem)] overflow-hidden rounded-[var(--radius-card)] border border-[var(--color-border)] bg-[var(--color-surface)] shadow-[var(--shadow-hover)]">
           <div className="border-b border-[var(--color-border)] px-3 py-2">
             <p className="text-sm font-semibold text-[var(--color-foreground)]">
-              {t("header.messageNotifications", "Student message notifications")}
+              {t(titleKey, titleFallback)}
             </p>
             <p className="text-xs text-[var(--color-muted)]">
               {count > 0
                 ? fillMessage(t("header.unreadMessagesCount", "{count} unread"), {
                     count,
                   })
-                : t("header.noUnreadMessages", "No new student messages")}
+                : t(emptyKey, emptyFallback)}
             </p>
           </div>
           <div className="max-h-72 overflow-y-auto">
             {items.length === 0 ? (
               <p className="px-3 py-4 text-sm text-[var(--color-muted)]">
-                {t("header.noUnreadMessages", "No new student messages")}
+                {t(emptyKey, emptyFallback)}
               </p>
             ) : (
               items.map((item) => (
@@ -143,7 +163,7 @@ export function MessageNotifications({ compact = false }: { compact?: boolean })
                 >
                   <div className="flex items-start justify-between gap-2">
                     <p className="truncate text-sm font-medium text-[var(--color-foreground)]">
-                      {item.studentName || t("header.studentFallback", "Student")}
+                      {itemTitle(item)}
                     </p>
                     {item.unreadCount > 1 ? (
                       <span className="shrink-0 rounded-full bg-[var(--color-primary)]/15 px-1.5 py-0.5 text-[10px] font-semibold text-[var(--color-primary)]">

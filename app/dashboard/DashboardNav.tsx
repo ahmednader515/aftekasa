@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useCallback, useEffect, useState } from "react";
 import { usePathname } from "next/navigation";
 import { useT } from "@/components/LocaleProvider";
 
@@ -15,20 +16,57 @@ function NavLink({
   href,
   children,
   exact = false,
+  badgeCount = 0,
 }: {
   href: string;
   children: React.ReactNode;
   exact?: boolean;
+  badgeCount?: number;
 }) {
   const pathname = usePathname();
   const isActive = exact ? pathname === href : pathname === href || pathname.startsWith(href + "/");
+  const badgeLabel = badgeCount > 99 ? "99+" : String(badgeCount);
   return (
     <Link
       href={href}
-      className={`${baseClass} ${isActive ? activeClass : inactiveClass}`}
+      className={`relative inline-flex items-center gap-2 ${baseClass} ${isActive ? activeClass : inactiveClass}`}
     >
       {children}
+      {badgeCount > 0 ? (
+        <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-[var(--color-primary)] px-1 text-[10px] font-bold text-white">
+          {badgeLabel}
+        </span>
+      ) : null}
     </Link>
+  );
+}
+
+function StudentInboxNavLink() {
+  const t = useT();
+  const pathname = usePathname();
+  const [count, setCount] = useState(0);
+
+  const refresh = useCallback(async () => {
+    try {
+      const res = await fetch("/api/messages/unread", { credentials: "include" });
+      if (!res.ok) return;
+      const data = await res.json();
+      setCount(Number(data.count ?? 0));
+    } catch {
+      /* تجاهل */
+    }
+  }, []);
+
+  useEffect(() => {
+    void refresh();
+    const id = window.setInterval(() => void refresh(), 25_000);
+    return () => window.clearInterval(id);
+  }, [refresh, pathname]);
+
+  return (
+    <NavLink href="/dashboard/messages" badgeCount={count}>
+      {t("dashboardNav.inbox", "Inbox")}
+    </NavLink>
   );
 }
 
@@ -64,9 +102,7 @@ export function DashboardNav({
   if (!isStaff) {
     return (
       <>
-        <NavLink href="/dashboard/messages">
-          {t("dashboardNav.inbox", "Inbox")}
-        </NavLink>
+        <StudentInboxNavLink />
         <Link
           href="/courses"
           className={`${baseClass} ${inactiveClass}`}

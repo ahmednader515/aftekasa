@@ -2,6 +2,8 @@
 
 import { useState } from "react";
 import type { HomeworkMaterial } from "@/lib/homework-materials";
+import { uploadWithProgress } from "@/lib/upload-with-progress";
+import { UploadProgressBar } from "@/components/UploadProgressBar";
 
 type Props = {
   acceptsHomework: boolean;
@@ -35,16 +37,17 @@ export function LessonHomeworkAssignmentFields({
   labels,
 }: Props) {
   const [uploading, setUploading] = useState<"pdf" | "image" | null>(null);
+  const [uploadProgress, setUploadProgress] = useState(0);
 
   async function uploadMaterial(file: File, type: "pdf" | "image") {
     setUploading(type);
+    setUploadProgress(0);
     try {
-      const fd = new FormData();
-      fd.set("file", file);
       const endpoint = type === "pdf" ? "/api/upload/pdf" : "/api/upload/image";
-      const res = await fetch(endpoint, { method: "POST", body: fd });
-      const data = await res.json().catch(() => ({}));
-      if (res.ok && data.url) {
+      const { ok, data } = await uploadWithProgress(endpoint, file, (state) => {
+        setUploadProgress(state.percent);
+      });
+      if (ok && data.url) {
         onMaterialsChange([
           ...materials,
           {
@@ -56,6 +59,7 @@ export function LessonHomeworkAssignmentFields({
       }
     } finally {
       setUploading(null);
+      setUploadProgress(0);
     }
   }
 
@@ -78,7 +82,7 @@ export function LessonHomeworkAssignmentFields({
             <p className="mt-0.5 text-xs text-[var(--color-muted)]">{labels.materialsHelp}</p>
             <div className="mt-2 flex flex-wrap gap-2">
               <label className="inline-block cursor-pointer rounded-[var(--radius-btn)] border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-1.5 text-sm">
-                {uploading === "pdf" ? labels.uploading : labels.uploadPdf}
+                {labels.uploadPdf}
                 <input
                   type="file"
                   accept="application/pdf"
@@ -92,7 +96,7 @@ export function LessonHomeworkAssignmentFields({
                 />
               </label>
               <label className="inline-block cursor-pointer rounded-[var(--radius-btn)] border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-1.5 text-sm">
-                {uploading === "image" ? labels.uploading : labels.uploadImage}
+                {labels.uploadImage}
                 <input
                   type="file"
                   accept="image/jpeg,image/png,image/webp,image/gif"
@@ -106,6 +110,9 @@ export function LessonHomeworkAssignmentFields({
                 />
               </label>
             </div>
+            {uploading ? (
+              <UploadProgressBar percent={uploadProgress} label={labels.uploading} />
+            ) : null}
             {labels.uploadSizeHint ? (
               <p className="mt-1.5 text-xs text-[var(--color-muted)]">{labels.uploadSizeHint}</p>
             ) : null}

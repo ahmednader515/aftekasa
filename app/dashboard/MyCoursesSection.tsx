@@ -58,7 +58,14 @@ function toCourseCardCourse(c: CourseWithCategory): CourseCardCourse {
   };
 }
 
-export function MyCoursesSection({ courses }: { courses: CourseWithCategory[] }) {
+export function MyCoursesSection({
+  courses,
+  browseHref = "/courses",
+}: {
+  courses: CourseWithCategory[];
+  /** When set (e.g. student's grade category), empty-state browse link stays grade-scoped. */
+  browseHref?: string;
+}) {
   const t = useT();
   const locale = useLocale();
   const dir = getDir(locale);
@@ -84,7 +91,7 @@ export function MyCoursesSection({ courses }: { courses: CourseWithCategory[] })
         </h2>
         <p className="text-[var(--color-muted)]">
           {t("dashboard.page.myCourses.emptyBeforeLink", "You have not enrolled in any course yet. ")}{" "}
-          <Link href="/courses" className="font-medium text-[var(--color-primary)] hover:underline">
+          <Link href={browseHref} className="font-medium text-[var(--color-primary)] hover:underline">
             {t("dashboard.page.myCourses.browseCoursesLink", "Browse courses")}
           </Link>
         </p>
