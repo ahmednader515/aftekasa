@@ -15,6 +15,7 @@ export type LessonSyncInput = {
   videoUrl?: string;
   content?: string;
   pdfUrl?: string;
+  isPublished?: boolean;
   acceptsHomework?: boolean;
   homeworkMaterials?: HomeworkMaterial[];
   homeworkExplanationVideoUrl?: string;
@@ -44,6 +45,7 @@ export async function syncCourseLessons(params: {
       video_url: le.videoUrl?.trim() || null,
       pdf_url: le.pdfUrl?.trim() || null,
       order: orderVal,
+      is_published: le.isPublished !== false,
       accepts_homework: !!le.acceptsHomework,
       homework_materials: serializeHomeworkMaterials(le.homeworkMaterials),
       homework_explanation_video_url: le.homeworkExplanationVideoUrl?.trim() || null,

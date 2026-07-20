@@ -360,6 +360,8 @@ export interface Lesson {
   duration: number | null;
   order: number;
   course_id: string;
+  /** When false, hidden from students (still visible in admin edit). Default true. */
+  is_published?: boolean;
   accepts_homework?: boolean;
   /** JSON array of { url, fileName, type: "pdf"|"image" } */
   homework_materials?: string | null;
@@ -381,6 +383,8 @@ export interface Quiz {
   quiz_type?: QuizType;
   parent_quiz_id?: string | null;
   max_attempts?: number | null;
+  /** When false, hidden from students (still visible in admin edit). Default true. */
+  is_published?: boolean;
   created_at: Date;
   updated_at: Date;
 }
@@ -498,6 +502,7 @@ export interface LessonApp {
   duration?: number | null;
   order: number;
   courseId: string;
+  isPublished?: boolean;
   createdAt?: Date;
   updatedAt?: Date;
 }
@@ -508,6 +513,7 @@ export interface QuizApp {
   courseId: string;
   order: number;
   timeLimitMinutes?: number | null;
+  isPublished?: boolean;
   questions?: (QuestionApp & { options: QuestionOptionApp[] })[];
 }
 

@@ -19,6 +19,8 @@ export type QuizRow = {
   maxAttempts: string;
   quizType: "NORMAL" | "REMEDIAL";
   parentQuizRef: ParentQuizRef | null;
+  /** Show quiz to students (default true). */
+  isPublished: boolean;
   questions: QuestionRow[];
 };
 
@@ -45,6 +47,7 @@ export type CourseFormLessonLike = {
   videoUrl?: string;
   content?: string;
   pdfUrl?: string;
+  isPublished?: boolean;
   acceptsHomework?: boolean;
   homeworkMaterials?: unknown[];
   homeworkExplanationVideoUrl?: string;

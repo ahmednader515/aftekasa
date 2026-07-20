@@ -31,6 +31,7 @@ export type CourseQuizInput = {
   maxAttempts?: number | null;
   quizType?: QuizType;
   parentQuizRef?: ParentQuizRef | null;
+  isPublished?: boolean;
   questions: QuestionInput[];
 };
 
@@ -121,6 +122,7 @@ export async function saveCourseQuizzes(params: {
         typeof q.maxAttempts === "number" && Number.isFinite(q.maxAttempts) && q.maxAttempts >= 1
           ? Math.floor(q.maxAttempts)
           : null,
+      is_published: q.isPublished !== false,
     };
 
     let activeQuizId: string;

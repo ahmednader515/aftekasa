@@ -35,6 +35,7 @@ type LessonRow = {
   videoUrl: string;
   content: string;
   pdfUrl: string;
+  isPublished: boolean;
   acceptsHomework: boolean;
   homeworkMaterials: HomeworkMaterial[];
   homeworkExplanationVideoUrl: string;
@@ -56,6 +57,7 @@ type InitialQuizRow = {
   parentQuizId?: string | null;
   timeLimitMinutes?: number | null;
   maxAttempts?: number | null;
+  isPublished?: boolean;
   questions: InitialQuestionRow[];
 };
 type InitialLinkedQuizRow = {
@@ -92,6 +94,7 @@ const defaultLesson: LessonRow = {
   videoUrl: "",
   content: "",
   pdfUrl: "",
+  isPublished: true,
   acceptsHomework: false,
   homeworkMaterials: [],
   homeworkExplanationVideoUrl: "",
@@ -102,6 +105,7 @@ const defaultQuiz: QuizRow = {
   maxAttempts: "",
   quizType: "NORMAL",
   parentQuizRef: null,
+  isPublished: true,
   questions: [{ type: "MULTIPLE_CHOICE", questionText: "", imageUrl: "", options: [{ text: "", isCorrect: false }] }],
 };
 
@@ -150,6 +154,7 @@ export function EditCourseForm({
             videoUrl: String(r.videoUrl ?? r.video_url ?? ""),
             content: String(r.content ?? ""),
             pdfUrl: String(r.pdfUrl ?? r.pdf_url ?? ""),
+            isPublished: r.isPublished !== false && r.is_published !== false,
             acceptsHomework: Boolean(r.acceptsHomework ?? r.accepts_homework ?? false),
             homeworkMaterials: parseHomeworkMaterials(
               r.homeworkMaterials ?? r.homework_materials,
@@ -189,6 +194,7 @@ export function EditCourseForm({
           timeLimitMinutes: q.timeLimitMinutes != null ? String(q.timeLimitMinutes) : "",
           maxAttempts: q.maxAttempts != null ? String(q.maxAttempts) : "",
           quizType: q.quizType === "REMEDIAL" ? "REMEDIAL" : "NORMAL",
+          isPublished: q.isPublished !== false,
           parentQuizRef: resolveParentQuizRefFromId(
             q.parentQuizId,
             initialData.quizzes,
@@ -498,6 +504,7 @@ export function EditCourseForm({
           const n = parseInt(q.maxAttempts, 10);
           return Number.isFinite(n) && n >= 1 ? n : null;
         })(),
+        isPublished: q.isPublished !== false,
         questions: q.questions
           .filter(questionHasContent)
           .map((qt) => ({
@@ -549,6 +556,7 @@ export function EditCourseForm({
         videoUrl: l.videoUrl.trim() || undefined,
         content: l.content.trim() || undefined,
         pdfUrl: l.pdfUrl.trim() || undefined,
+        isPublished: l.isPublished !== false,
         acceptsHomework: l.acceptsHomework,
         homeworkMaterials: l.homeworkMaterials,
         homeworkExplanationVideoUrl: l.homeworkExplanationVideoUrl.trim() || undefined,
@@ -718,15 +726,28 @@ export function EditCourseForm({
         <p className="mb-4 text-sm text-[var(--color-muted)]">{t(`${Cf}.lessonsIntro`)}</p>
         {lessons.map((lesson, i) => (
           <div key={i} className="mb-6 rounded-[var(--radius-btn)] border border-[var(--color-border)] bg-[var(--color-background)] p-4">
-            <div className="mb-2 flex items-center justify-between">
+            <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
               <span className="font-medium text-[var(--color-foreground)]">{t(`${Cf}.lessonN`)}{i + 1}</span>
-              {lessons.length > 1 && (
-                <button type="button" onClick={() => removeLesson(i)} className="text-sm text-red-600 hover:underline">{t(`${Cf}.lessonDeleteBtn`)}</button>
-              )}
+              <div className="flex flex-wrap items-center gap-3">
+                <label className="flex items-center gap-2 text-sm text-[var(--color-foreground)]">
+                  <input
+                    type="checkbox"
+                    checked={lesson.isPublished}
+                    onChange={(e) => updateLesson(i, "isPublished", e.target.checked)}
+                  />
+                  {t(`${Cf}.showLessonToStudents`, "Show this lesson to students")}
+                </label>
+                {lessons.length > 1 && (
+                  <button type="button" onClick={() => removeLesson(i)} className="text-sm text-red-600 hover:underline">{t(`${Cf}.lessonDeleteBtn`)}</button>
+                )}
+              </div>
             </div>
             <div className="space-y-2">
               <input type="text" value={lesson.title} onChange={(e) => updateLesson(i, "title", e.target.value)} placeholder={t(`${Cf}.lessonTitlePlaceholder`)} className="w-full rounded-[var(--radius-btn)] border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm" />
-              <input type="url" value={lesson.videoUrl} onChange={(e) => updateLesson(i, "videoUrl", e.target.value)} placeholder={t(`${Cf}.youtubePlaceholder`)} className="w-full rounded-[var(--radius-btn)] border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm" />
+              <div>
+                <label className="block text-xs text-[var(--color-muted)]">{t(`${Cf}.youtubeOptionalLabel`, "YouTube video (optional — leave empty for PDF/homework-only lessons)")}</label>
+                <input type="url" value={lesson.videoUrl} onChange={(e) => updateLesson(i, "videoUrl", e.target.value)} placeholder={t(`${Cf}.youtubePlaceholder`)} className="mt-1 w-full rounded-[var(--radius-btn)] border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm" />
+              </div>
               <div>
                 <label className="block text-xs text-[var(--color-muted)]">{t(`${Cf}.lessonPdfOptional`)}</label>
                 {lesson.pdfUrl ? (
@@ -823,11 +844,25 @@ export function EditCourseForm({
         <p className="mb-4 text-sm text-[var(--color-muted)]">{t(`${Cf}.quizzesIntro`)}</p>
         {quizzes.map((quiz, qi) => (
           <div key={qi} className="mb-6 rounded-[var(--radius-btn)] border border-[var(--color-border)] bg-[var(--color-background)] p-4">
-            <div className="mb-3 flex items-center justify-between">
-              <input type="text" value={quiz.title} onChange={(e) => updateQuizTitle(qi, e.target.value)} placeholder={t(`${Cf}.quizTitlePlaceholder`)} className="flex-1 rounded-[var(--radius-btn)] border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2" />
-              {quizzes.length > 1 && (
-                <button type="button" onClick={() => removeQuiz(qi)} className="mr-2 text-sm text-red-600 hover:underline">{t(`${Cf}.deleteQuiz`)}</button>
-              )}
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+              <input type="text" value={quiz.title} onChange={(e) => updateQuizTitle(qi, e.target.value)} placeholder={t(`${Cf}.quizTitlePlaceholder`)} className="min-w-0 flex-1 rounded-[var(--radius-btn)] border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2" />
+              <div className="flex flex-wrap items-center gap-3">
+                <label className="flex items-center gap-2 text-sm text-[var(--color-foreground)]">
+                  <input
+                    type="checkbox"
+                    checked={quiz.isPublished}
+                    onChange={(e) =>
+                      setQuizzes((prev) =>
+                        prev.map((x, i) => (i === qi ? { ...x, isPublished: e.target.checked } : x)),
+                      )
+                    }
+                  />
+                  {t(`${Cf}.showQuizToStudents`, "Show this quiz to students")}
+                </label>
+                {quizzes.length > 1 && (
+                  <button type="button" onClick={() => removeQuiz(qi)} className="text-sm text-red-600 hover:underline">{t(`${Cf}.deleteQuiz`)}</button>
+                )}
+              </div>
             </div>
             <div className="mb-3 grid gap-3 sm:grid-cols-2">
               <div>

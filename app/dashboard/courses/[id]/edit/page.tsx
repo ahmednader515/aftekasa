@@ -100,6 +100,7 @@ export default async function EditCoursePage({ params }: Props) {
         content: String(row.content ?? ""),
         pdfUrl: String(row.pdfUrl ?? row.pdf_url ?? ""),
         acceptsHomework: Boolean(row.acceptsHomework ?? row.accepts_homework ?? false),
+        isPublished: row.isPublished !== false && row.is_published !== false,
         homeworkMaterials: parseHomeworkMaterials(row.homeworkMaterials ?? row.homework_materials),
         homeworkExplanationVideoUrl: String(
           row.homeworkExplanationVideoUrl ?? row.homework_explanation_video_url ?? "",
@@ -128,6 +129,7 @@ export default async function EditCoursePage({ params }: Props) {
           const n = Number(raw);
           return Number.isFinite(n) && n >= 1 ? n : null;
         })(),
+        isPublished: row.isPublished !== false && row.is_published !== false,
         questions: questions.map((qt) => ({
           type: (qt.type === "ESSAY" || qt.type === "TRUE_FALSE" ? qt.type : "MULTIPLE_CHOICE") as "MULTIPLE_CHOICE" | "ESSAY" | "TRUE_FALSE",
           questionText: String(qt.questionText ?? qt.question_text ?? ""),

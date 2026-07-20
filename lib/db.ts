@@ -4478,7 +4478,12 @@ export async function getLessonsByCourseId(courseId: string): Promise<Lesson[]> 
     `;
     return (rows as Record<string, unknown>[]).map((r) => mapLegacyChapterToLesson(r));
   }
-  const rows = await sql`SELECT * FROM "Lesson" WHERE course_id = ${courseId} ORDER BY "order" ASC`;
+  await ensureLessonHomeworkAssignmentColumns();
+  const rows = await sql`
+    SELECT * FROM "Lesson"
+    WHERE course_id = ${courseId} AND COALESCE(is_published, true) = true
+    ORDER BY "order" ASC
+  `;
   return rows as Lesson[];
 }
 
@@ -4530,12 +4535,13 @@ export async function getLessonById(lessonId: string): Promise<Lesson | null> {
   return chapterRow ? mapLegacyChapterToLesson(chapterRow) : null;
 }
 
-/** أعمدة مواد الواجب وفيديو الشرح على الحصة */
+/** أعمدة مواد الواجب وفيديو الشرح وإظهار الحصة للطلاب */
 export async function ensureLessonHomeworkAssignmentColumns(): Promise<void> {
   return ensureOnce("ensureLessonHomeworkAssignmentColumns", async () => {
     try {
       await sql`ALTER TABLE "Lesson" ADD COLUMN IF NOT EXISTS homework_materials TEXT`;
       await sql`ALTER TABLE "Lesson" ADD COLUMN IF NOT EXISTS homework_explanation_video_url TEXT`;
+      await sql`ALTER TABLE "Lesson" ADD COLUMN IF NOT EXISTS is_published BOOLEAN NOT NULL DEFAULT true`;
     } catch {
       /* DDL غير متاح */
     }
@@ -4551,12 +4557,14 @@ export async function createLesson(data: {
   video_url?: string | null;
   pdf_url?: string | null;
   order: number;
+  is_published?: boolean;
   accepts_homework?: boolean;
   homework_materials?: string | null;
   homework_explanation_video_url?: string | null;
 }): Promise<Lesson> {
   const id = generateId();
   const acceptsHomework = data.accepts_homework ?? false;
+  const isPublished = data.is_published !== false;
   const homeworkMaterials = data.homework_materials ?? null;
   const homeworkExplanationVideoUrl = data.homework_explanation_video_url?.trim() || null;
   const legacy = (await detectSchemaMode(sql)) === "legacy";
@@ -4569,7 +4577,7 @@ export async function createLesson(data: {
       )
       VALUES (
         ${id}, ${data.title}, ${data.content ?? null}, ${data.video_url ?? null}, ${data.pdf_url ?? null},
-        ${data.order}, true, false, ${data.course_id}, NOW(), NOW()
+        ${data.order}, ${isPublished}, false, ${data.course_id}, NOW(), NOW()
       )
     `;
   } else {
@@ -4578,29 +4586,35 @@ export async function createLesson(data: {
       await sql`
         INSERT INTO "Lesson" (
           id, course_id, title, title_ar, slug, content, video_url, pdf_url, "order",
-          accepts_homework, homework_materials, homework_explanation_video_url
+          is_published, accepts_homework, homework_materials, homework_explanation_video_url
         )
         VALUES (
           ${id}, ${data.course_id}, ${data.title}, ${data.title_ar ?? null}, ${data.slug},
           ${data.content ?? null}, ${data.video_url ?? null}, ${data.pdf_url ?? null}, ${data.order},
-          ${acceptsHomework}, ${homeworkMaterials}, ${homeworkExplanationVideoUrl}
+          ${isPublished}, ${acceptsHomework}, ${homeworkMaterials}, ${homeworkExplanationVideoUrl}
         )
       `;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      const columnMissing = msg.includes("accepts_homework") || msg.includes("homework_materials") || msg.includes("homework_explanation_video_url") || (msg.includes("column") && msg.includes("does not exist"));
+      const columnMissing =
+        msg.includes("accepts_homework") ||
+        msg.includes("homework_materials") ||
+        msg.includes("homework_explanation_video_url") ||
+        msg.includes("is_published") ||
+        (msg.includes("column") && msg.includes("does not exist"));
       if (columnMissing) {
         await ensureLessonHomeworkAssignmentColumns();
         await sql`ALTER TABLE "Lesson" ADD COLUMN IF NOT EXISTS accepts_homework BOOLEAN NOT NULL DEFAULT false`;
+        await sql`ALTER TABLE "Lesson" ADD COLUMN IF NOT EXISTS is_published BOOLEAN NOT NULL DEFAULT true`;
         await sql`
           INSERT INTO "Lesson" (
             id, course_id, title, title_ar, slug, content, video_url, pdf_url, "order",
-            accepts_homework, homework_materials, homework_explanation_video_url
+            is_published, accepts_homework, homework_materials, homework_explanation_video_url
           )
           VALUES (
             ${id}, ${data.course_id}, ${data.title}, ${data.title_ar ?? null}, ${data.slug},
             ${data.content ?? null}, ${data.video_url ?? null}, ${data.pdf_url ?? null}, ${data.order},
-            ${acceptsHomework}, ${homeworkMaterials}, ${homeworkExplanationVideoUrl}
+            ${isPublished}, ${acceptsHomework}, ${homeworkMaterials}, ${homeworkExplanationVideoUrl}
           )
         `;
       } else {
@@ -4640,12 +4654,14 @@ export async function updateLesson(
     video_url?: string | null;
     pdf_url?: string | null;
     order: number;
+    is_published?: boolean;
     accepts_homework?: boolean;
     homework_materials?: string | null;
     homework_explanation_video_url?: string | null;
   },
 ): Promise<void> {
   const acceptsHomework = data.accepts_homework ?? false;
+  const isPublished = data.is_published !== false;
   const homeworkMaterials = data.homework_materials ?? null;
   const homeworkExplanationVideoUrl = data.homework_explanation_video_url?.trim() || null;
   const legacy = (await detectSchemaMode(sql)) === "legacy";
@@ -4658,6 +4674,7 @@ export async function updateLesson(
           "videoUrl" = ${data.video_url ?? null},
           "documentUrl" = ${data.pdf_url ?? null},
           position = ${data.order},
+          "isPublished" = ${isPublished},
           "updatedAt" = NOW()
       WHERE id = ${id}
     `;
@@ -4675,6 +4692,7 @@ export async function updateLesson(
           video_url = ${data.video_url ?? null},
           pdf_url = ${data.pdf_url ?? null},
           "order" = ${data.order},
+          is_published = ${isPublished},
           accepts_homework = ${acceptsHomework},
           homework_materials = ${homeworkMaterials},
           homework_explanation_video_url = ${homeworkExplanationVideoUrl},
@@ -4683,10 +4701,16 @@ export async function updateLesson(
     `;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    const columnMissing = msg.includes("accepts_homework") || msg.includes("homework_materials") || msg.includes("homework_explanation_video_url") || (msg.includes("column") && msg.includes("does not exist"));
+    const columnMissing =
+      msg.includes("accepts_homework") ||
+      msg.includes("homework_materials") ||
+      msg.includes("homework_explanation_video_url") ||
+      msg.includes("is_published") ||
+      (msg.includes("column") && msg.includes("does not exist"));
     if (columnMissing) {
       await ensureLessonHomeworkAssignmentColumns();
       await sql`ALTER TABLE "Lesson" ADD COLUMN IF NOT EXISTS accepts_homework BOOLEAN NOT NULL DEFAULT false`;
+      await sql`ALTER TABLE "Lesson" ADD COLUMN IF NOT EXISTS is_published BOOLEAN NOT NULL DEFAULT true`;
       await sql`
         UPDATE "Lesson"
         SET title = ${data.title},
@@ -4696,6 +4720,7 @@ export async function updateLesson(
             video_url = ${data.video_url ?? null},
             pdf_url = ${data.pdf_url ?? null},
             "order" = ${data.order},
+            is_published = ${isPublished},
             accepts_homework = ${acceptsHomework},
             homework_materials = ${homeworkMaterials},
             homework_explanation_video_url = ${homeworkExplanationVideoUrl},
@@ -4740,6 +4765,7 @@ export async function ensureQuizFeaturesSchema(): Promise<void> {
     await sql`CREATE INDEX IF NOT EXISTS "QuizCourseAssignment_quizId_idx" ON "QuizCourseAssignment"("quizId")`;
     await sql`ALTER TABLE "QuizAttempt" ADD COLUMN IF NOT EXISTS answers_json TEXT`;
     await sql`ALTER TABLE "Quiz" ADD COLUMN IF NOT EXISTS max_attempts INT`;
+    await sql`ALTER TABLE "Quiz" ADD COLUMN IF NOT EXISTS is_published BOOLEAN NOT NULL DEFAULT true`;
     await backfillQuestionImageUrls();
   });
 }
@@ -5011,11 +5037,13 @@ export async function ensureQuestionOptionPositionColumn(): Promise<void> {
 
 function mapQuizRow(row: Record<string, unknown>, legacy: boolean): Record<string, unknown> {
   const base = legacy ? (mapLegacyQuizRow(row) as unknown as Record<string, unknown>) : rowToCamel(row)!;
+  const publishedRaw = base.isPublished ?? base.is_published ?? row.isPublished ?? row.is_published;
   return {
     ...base,
     quizType: normalizeQuizType(base.quizType ?? base.quiz_type),
     parentQuizId: (base.parentQuizId ?? base.parent_quiz_id ?? null) as string | null,
     maxAttempts: base.maxAttempts ?? base.max_attempts ?? null,
+    isPublished: publishedRaw === false || publishedRaw === "false" ? false : true,
   };
 }
 
@@ -5092,9 +5120,14 @@ export async function getCourseWithContent(segment: string): Promise<{
   const courseId = courseRow.id as string;
   const legacy = (await detectSchemaMode(sql)) === "legacy";
   await ensureQuizFeaturesSchema();
+  await ensureLessonHomeworkAssignmentColumns();
   const lessonRows = legacy
     ? await sql`SELECT * FROM "Chapter" WHERE "courseId" = ${courseId} AND "isPublished" = true ORDER BY position ASC`
-    : await sql`SELECT * FROM "Lesson" WHERE course_id = ${courseId} ORDER BY "order" ASC`;
+    : await sql`
+        SELECT * FROM "Lesson"
+        WHERE course_id = ${courseId} AND COALESCE(is_published, true) = true
+        ORDER BY "order" ASC
+      `;
   const quizRows = legacy
     ? await sql`
         SELECT q.*, false as is_linked, q."courseId" as owner_course_id, q.position as sort_position,
@@ -5113,13 +5146,13 @@ export async function getCourseWithContent(segment: string): Promise<{
         SELECT q.*, false as is_linked, q.course_id as owner_course_id, q."order" as sort_position,
           (SELECT COUNT(*)::int FROM "Question" WHERE quiz_id = q.id) as question_count
         FROM "Quiz" q
-        WHERE q.course_id = ${courseId}
+        WHERE q.course_id = ${courseId} AND COALESCE(q.is_published, true) = true
         UNION ALL
         SELECT q.*, true as is_linked, q.course_id as owner_course_id, a.position as sort_position,
           (SELECT COUNT(*)::int FROM "Question" WHERE quiz_id = q.id) as question_count
         FROM "Quiz" q
         JOIN "QuizCourseAssignment" a ON a."quizId" = q.id
-        WHERE a."courseId" = ${courseId}
+        WHERE a."courseId" = ${courseId} AND COALESCE(q.is_published, true) = true
         ORDER BY sort_position ASC
       `;
   const lessons = legacy
@@ -5248,6 +5281,13 @@ export async function canStudentAccessQuizInCourse(
   courseId: string,
 ): Promise<boolean> {
   if (!(await quizBelongsToCourse(quizId, courseId))) return false;
+  await ensureQuizFeaturesSchema();
+  const legacy = (await detectSchemaMode(sql)) === "legacy";
+  const pubRows = legacy
+    ? await sql`SELECT "isPublished" as is_published FROM "Quiz" WHERE id = ${quizId} LIMIT 1`
+    : await sql`SELECT is_published FROM "Quiz" WHERE id = ${quizId} LIMIT 1`;
+  const pub = (pubRows[0] as { is_published?: boolean } | undefined)?.is_published;
+  if (pub === false) return false;
   const enrolled = await getEnrollment(userId, courseId);
   if (enrolled) return true;
   if (await hasFullCourseAccessAsStudent(userId, courseId)) return true;
@@ -5299,6 +5339,7 @@ export async function createQuiz(data: {
   quiz_type?: QuizType;
   parent_quiz_id?: string | null;
   max_attempts?: number | null;
+  is_published?: boolean;
 }): Promise<Quiz> {
   await ensureQuizFeaturesSchema();
   const legacy = (await detectSchemaMode(sql)) === "legacy";
@@ -5306,17 +5347,18 @@ export async function createQuiz(data: {
   const quizType = normalizeQuizType(data.quiz_type ?? "NORMAL");
   const parentQuizId = data.parent_quiz_id?.trim() || null;
   const maxAttempts = typeof data.max_attempts === "number" && data.max_attempts >= 1 ? data.max_attempts : null;
+  const isPublished = data.is_published !== false;
 
   if (legacy) {
     await sql`
       INSERT INTO "Quiz" (id, "courseId", title, position, "isPublished", timer, "maxAttempts", "quizType", "parentQuizId", "createdAt", "updatedAt")
-      VALUES (${id}, ${data.course_id}, ${data.title}, ${data.order}, true, ${data.time_limit_minutes ?? null}, ${maxAttempts ?? 1}, ${quizType}, ${parentQuizId}, NOW(), NOW())
+      VALUES (${id}, ${data.course_id}, ${data.title}, ${data.order}, ${isPublished}, ${data.time_limit_minutes ?? null}, ${maxAttempts ?? 1}, ${quizType}, ${parentQuizId}, NOW(), NOW())
     `;
   } else {
     const runInsert = async () => {
       await sql`
-        INSERT INTO "Quiz" (id, course_id, title, "order", time_limit_minutes, quiz_type, parent_quiz_id, max_attempts)
-        VALUES (${id}, ${data.course_id}, ${data.title}, ${data.order}, ${data.time_limit_minutes ?? null}, ${quizType}, ${parentQuizId}, ${maxAttempts})
+        INSERT INTO "Quiz" (id, course_id, title, "order", time_limit_minutes, quiz_type, parent_quiz_id, max_attempts, is_published)
+        VALUES (${id}, ${data.course_id}, ${data.title}, ${data.order}, ${data.time_limit_minutes ?? null}, ${quizType}, ${parentQuizId}, ${maxAttempts}, ${isPublished})
       `;
     };
     try {
@@ -5324,10 +5366,13 @@ export async function createQuiz(data: {
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       const code = typeof (err as { code?: string })?.code === "string" ? (err as { code: string }).code : "";
-      const isMissingColumn = code === "42703" || /time_limit_minutes|quiz_type|parent_quiz_id|does not exist|column.*not exist/i.test(msg);
+      const isMissingColumn =
+        code === "42703" ||
+        /time_limit_minutes|quiz_type|parent_quiz_id|is_published|does not exist|column.*not exist/i.test(msg);
       if (isMissingColumn) {
         await ensureQuizFeaturesSchema();
         await sql`ALTER TABLE "Quiz" ADD COLUMN IF NOT EXISTS time_limit_minutes INT`;
+        await sql`ALTER TABLE "Quiz" ADD COLUMN IF NOT EXISTS is_published BOOLEAN NOT NULL DEFAULT true`;
         await runInsert();
       } else {
         throw err;
@@ -5359,6 +5404,7 @@ export async function updateQuiz(
     quiz_type?: QuizType;
     parent_quiz_id?: string | null;
     max_attempts?: number | null;
+    is_published?: boolean;
   },
 ): Promise<void> {
   await ensureQuizFeaturesSchema();
@@ -5366,6 +5412,7 @@ export async function updateQuiz(
   const quizType = normalizeQuizType(data.quiz_type ?? "NORMAL");
   const parentQuizId = data.parent_quiz_id?.trim() || null;
   const maxAttempts = typeof data.max_attempts === "number" && data.max_attempts >= 1 ? data.max_attempts : null;
+  const isPublished = data.is_published !== false;
 
   if (legacy) {
     await sql`
@@ -5376,6 +5423,7 @@ export async function updateQuiz(
           "maxAttempts" = ${maxAttempts ?? 1},
           "quizType" = ${quizType},
           "parentQuizId" = ${parentQuizId},
+          "isPublished" = ${isPublished},
           "updatedAt" = NOW()
       WHERE id = ${quizId}
     `;
@@ -5390,6 +5438,7 @@ export async function updateQuiz(
         quiz_type = ${quizType},
         parent_quiz_id = ${parentQuizId},
         max_attempts = ${maxAttempts},
+        is_published = ${isPublished},
         updated_at = NOW()
     WHERE id = ${quizId}
   `;

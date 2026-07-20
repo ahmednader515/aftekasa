@@ -25,7 +25,9 @@ function CourseTableRow({
   c,
   deletingId,
   confirmDelete,
+  publishingId,
   onDelete,
+  onTogglePublish,
   t,
   egp,
   showTeacherColumn,
@@ -33,7 +35,9 @@ function CourseTableRow({
   c: CourseRow;
   deletingId: string | null;
   confirmDelete: string | null;
+  publishingId: string | null;
   onDelete: (id: string) => void;
+  onTogglePublish: (id: string, next: boolean) => void;
   t: (k: string, fb?: string) => string;
   egp: string;
   showTeacherColumn: boolean;
@@ -74,6 +78,22 @@ function CourseTableRow({
       </td>
       <td className="p-3">
         <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() => onTogglePublish(c.id, !c.isPublished)}
+            disabled={publishingId !== null}
+            className={
+              c.isPublished
+                ? "rounded-[var(--radius-btn)] border border-[var(--color-border)] px-3 py-1.5 text-sm font-medium hover:bg-[var(--color-background)] disabled:opacity-50"
+                : "rounded-[var(--radius-btn)] bg-[var(--color-primary)] px-3 py-1.5 text-sm font-medium text-white hover:bg-[var(--color-primary-hover)] disabled:opacity-50"
+            }
+          >
+            {publishingId === c.id
+              ? t(`${L}.updatingPublish`, "Updating...")
+              : c.isPublished
+                ? t(`${L}.unpublish`, "Unpublish")
+                : t(`${L}.publish`, "Publish")}
+          </button>
           <Link
             href={`/dashboard/courses/${c.id}/edit`}
             className="rounded-[var(--radius-btn)] border border-[var(--color-border)] px-3 py-1.5 text-sm font-medium hover:bg-[var(--color-background)]"
@@ -117,6 +137,7 @@ export function CoursesManageList({
   const [searchQuery, setSearchQuery] = useState("");
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
+  const [publishingId, setPublishingId] = useState<string | null>(null);
 
   const filteredCourses = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
@@ -165,6 +186,25 @@ export function CoursesManageList({
       return;
     }
     router.refresh();
+  }
+
+  async function handleTogglePublish(id: string, next: boolean) {
+    setPublishingId(id);
+    try {
+      const res = await fetch(`/api/dashboard/courses/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ isPublished: next }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        alert(data.error ?? t(`${L}.publishToggleFailed`, "Failed to update publish status"));
+        return;
+      }
+      router.refresh();
+    } finally {
+      setPublishingId(null);
+    }
   }
 
   if (courses.length === 0) {
@@ -238,7 +278,9 @@ export function CoursesManageList({
                       c={c}
                       deletingId={deletingId}
                       confirmDelete={confirmDelete}
+                      publishingId={publishingId}
                       onDelete={handleDelete}
+                      onTogglePublish={handleTogglePublish}
                       t={t}
                       egp={egp}
                       showTeacherColumn={showTeacherColumn}

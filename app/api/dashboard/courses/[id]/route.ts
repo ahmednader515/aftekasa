@@ -28,6 +28,7 @@ type LessonInput = {
   videoUrl?: string;
   content?: string;
   pdfUrl?: string;
+  isPublished?: boolean;
   acceptsHomework?: boolean;
   homeworkMaterials?: Array<{ url?: string; fileName?: string; type?: string }>;
   homeworkExplanationVideoUrl?: string;
@@ -330,4 +331,47 @@ export async function DELETE(
   revalidatePublicCache(PUBLIC_CACHE_TAGS.courses);
 
   return NextResponse.json({ success: true });
+}
+
+/** تبديل نشر الدورة بسرعة من قائمة الإدارة */
+export async function PATCH(
+  request: NextRequest,
+  { params }: { params: Promise<{ id: string }> },
+) {
+  const session = await getServerSession(authOptions);
+  if (!session) {
+    return NextResponse.json({ error: "غير مصرح" }, { status: 403 });
+  }
+
+  const { id } = await params;
+  let body: { isPublished?: boolean };
+  try {
+    body = await request.json();
+  } catch {
+    return NextResponse.json({ error: "طلب غير صالح" }, { status: 400 });
+  }
+
+  if (typeof body.isPublished !== "boolean") {
+    return NextResponse.json({ error: "isPublished مطلوب" }, { status: 400 });
+  }
+
+  const course = await getCourseById(id);
+  if (!course) {
+    return NextResponse.json({ error: "الدورة غير موجودة" }, { status: 404 });
+  }
+  const { createdById: createdBy, assignedTeacherId: assigned } = readCourseManageIds(
+    course as {
+      createdById?: string | null;
+      created_by_id?: string | null;
+      assignedTeacherId?: string | null;
+      assigned_teacher_id?: string | null;
+    },
+  );
+  if (!canManageCourse(session.user.role, session.user.id, createdBy, assigned)) {
+    return NextResponse.json({ error: "غير مصرح" }, { status: 403 });
+  }
+
+  await updateCourse(id, { is_published: body.isPublished });
+  revalidatePublicCache(PUBLIC_CACHE_TAGS.courses);
+  return NextResponse.json({ success: true, isPublished: body.isPublished });
 }

@@ -39,6 +39,7 @@ type LessonInput = {
   videoUrl?: string;
   content?: string;
   pdfUrl?: string;
+  isPublished?: boolean;
   acceptsHomework?: boolean;
   homeworkMaterials?: Array<{ url?: string; fileName?: string; type?: string }>;
   homeworkExplanationVideoUrl?: string;
@@ -64,6 +65,7 @@ export async function POST(request: NextRequest) {
     shortDescEn?: string;
     imageUrl?: string;
     price?: number;
+    isPublished?: boolean;
     maxQuizAttempts?: number | null;
     categoryId?: string | null;
     categoryName?: string;
@@ -153,7 +155,7 @@ export async function POST(request: NextRequest) {
       short_desc_en: (body.shortDescEn ?? body.shortDescAr ?? body.shortDesc)?.trim() || null,
       image_url: body.imageUrl?.trim() || null,
       price: body.price ?? 0,
-      is_published: true,
+      is_published: body.isPublished !== false,
       created_by_id: session.user.id,
       assigned_teacher_id: assignedTeacherId,
       max_quiz_attempts: body.maxQuizAttempts ?? null,
@@ -196,6 +198,7 @@ export async function POST(request: NextRequest) {
       video_url: le.videoUrl?.trim() || null,
       pdf_url: le.pdfUrl?.trim() || null,
       order: orderVal,
+      is_published: (le as { isPublished?: boolean }).isPublished !== false,
       accepts_homework: !!(le as { acceptsHomework?: boolean }).acceptsHomework,
       homework_materials: serializeHomeworkMaterials(parseHomeworkMaterials(le.homeworkMaterials)),
       homework_explanation_video_url: le.homeworkExplanationVideoUrl?.trim() || null,
