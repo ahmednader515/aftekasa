@@ -42,7 +42,7 @@ export default async function DashboardGradeStagesSettingsPage() {
       <p className="mt-1 text-sm text-[var(--color-muted)]">
         {t(
           "dashboard.gradeStagesPage.subtitle",
-          "Set a separate portrait image for each educational stage card on the homepage.",
+          "Set a separate portrait image for each educational stage card on the homepage. If empty, no image is shown on the card.",
         )}
       </p>
       <GradeStagesImagesForm initialStages={initialStages} />

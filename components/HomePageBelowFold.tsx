@@ -142,8 +142,6 @@ export async function HomePageBelowFold({
       countsBySlug[slug as GradeStageSlug] = (countsBySlug[slug as GradeStageSlug] ?? 0) + 1;
     }
   }
-  const fallbackGradeImageUrl =
-    homepageSettings.teacherImageUrl?.trim() || "/instructor.png";
   const gradeCategories = await getGradeStageCategories();
   const imagesBySlug: Partial<Record<GradeStageSlug, string | null>> = {};
   for (const cat of gradeCategories) {
@@ -311,7 +309,6 @@ export async function HomePageBelowFold({
           "Choose your educational level to view the courses that suit you",
         )}
         browseCta={t("home.gradesBrowseCta", "Browse courses")}
-        fallbackImageUrl={fallbackGradeImageUrl}
         imagesBySlug={imagesBySlug}
         countsBySlug={countsBySlug}
         locale={locale}

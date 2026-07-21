@@ -7,7 +7,6 @@ export function HomeGradeStagesSection({
   browseCta,
   courseCountLabel,
   allCoursesForLabel,
-  fallbackImageUrl,
   imagesBySlug,
   countsBySlug,
   locale,
@@ -18,7 +17,6 @@ export function HomeGradeStagesSection({
   /** Map count → display string already formatted */
   courseCountLabel: (count: number) => string;
   allCoursesForLabel: (gradeName: string) => string;
-  fallbackImageUrl: string;
   imagesBySlug: Partial<Record<GradeStageSlug, string | null>>;
   countsBySlug: Partial<Record<GradeStageSlug, number>>;
   locale: string;
@@ -43,12 +41,12 @@ export function HomeGradeStagesSection({
           <p className="mt-3 text-base text-[var(--color-muted)] sm:text-lg">{subtitle}</p>
         </div>
 
-        <div className="mt-12 grid gap-8 sm:grid-cols-2 lg:grid-cols-3">
+        <div className="mt-12 grid items-start gap-8 sm:grid-cols-2 lg:grid-cols-3">
           {GRADE_STAGES.map((stage, index) => {
             const count = countsBySlug[stage.slug] ?? 0;
             const gradeName = locale === "en" ? stage.nameEn : stage.nameAr;
             const cardTitle = stage.shortLabel;
-            const imageSrc = imagesBySlug[stage.slug]?.trim() || fallbackImageUrl;
+            const imageSrc = imagesBySlug[stage.slug]?.trim() || "";
             const orderLabel = String(index + 1).padStart(2, "0");
             return (
               <Link
@@ -56,20 +54,26 @@ export function HomeGradeStagesSection({
                 href={`/courses?category=${encodeURIComponent(stage.slug)}`}
                 className="grade-stage-tile group outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)] focus-visible:ring-offset-2"
               >
-                <div className="grade-stage-tile-media relative overflow-hidden">
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img
-                    src={imageSrc}
-                    alt=""
-                    className="h-full w-full object-cover object-[center_22%] transition duration-700 ease-out group-hover:scale-[1.04] group-hover:saturate-110"
-                  />
-                  <div className="grade-stage-tile-media-fade absolute inset-x-0 bottom-0 h-1/3" />
-                  <span className="absolute start-3 top-3 font-mono text-3xl font-black leading-none text-white/25 transition duration-500 group-hover:text-white/40">
-                    {orderLabel}
-                  </span>
-                </div>
+                {imageSrc ? (
+                  <div className="grade-stage-tile-media relative">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={imageSrc}
+                      alt=""
+                      className="transition duration-500 ease-out group-hover:saturate-110"
+                    />
+                    <span className="absolute start-3 top-3 font-mono text-3xl font-black leading-none text-white/25 drop-shadow transition duration-500 group-hover:text-white/40">
+                      {orderLabel}
+                    </span>
+                  </div>
+                ) : null}
 
                 <div className="grade-stage-tile-body">
+                  {!imageSrc ? (
+                    <span className="mb-3 inline-block font-mono text-2xl font-black leading-none text-[var(--color-primary)]/25">
+                      {orderLabel}
+                    </span>
+                  ) : null}
                   <div className="flex items-center justify-between gap-3">
                     <span className="text-xs font-bold text-[var(--color-primary)]">
                       {courseCountLabel(count)}

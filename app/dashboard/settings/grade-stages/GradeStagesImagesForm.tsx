@@ -129,13 +129,19 @@ export function GradeStagesImagesForm({ initialStages }: { initialStages: GradeS
             </div>
 
             <div className="mt-4 flex flex-col gap-4 sm:flex-row sm:items-start">
-              <div className="h-36 w-28 shrink-0 overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-background)]">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img
-                  src={stage.imageUrl.trim() || "/instructor.png"}
-                  alt=""
-                  className="h-full w-full object-cover object-[center_18%]"
-                />
+              <div className="flex h-36 w-28 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-background)]">
+                {stage.imageUrl.trim() ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={stage.imageUrl.trim()}
+                    alt=""
+                    className="h-full w-full object-cover object-center"
+                  />
+                ) : (
+                  <span className="px-2 text-center text-xs text-[var(--color-muted)]">
+                    {t(`${G}.noImage`, "No image")}
+                  </span>
+                )}
               </div>
 
               <div className="min-w-0 flex-1 space-y-3">

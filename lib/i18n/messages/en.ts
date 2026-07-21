@@ -721,10 +721,11 @@ export const enMessages: Messages = {
     gradeStagesPage: {
       title: "Educational stage cards",
       subtitle:
-        "Set a separate portrait image for each educational stage card on the homepage. If empty, the teacher image is used as a fallback.",
+        "Set a separate portrait image for each educational stage card on the homepage. If empty, no image is shown on the card.",
       chooseImage: "Choose image to upload",
       uploading: "Uploading…",
       imageUrlPlaceholder: "Or paste image URL: https://…",
+      noImage: "No image",
       save: "Save",
       saving: "Saving…",
       remove: "Remove",
