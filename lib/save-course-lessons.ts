@@ -21,6 +21,23 @@ export type LessonSyncInput = {
   homeworkExplanationVideoUrl?: string;
 };
 
+type LessonPayload = {
+  title: string;
+  title_ar: string | null;
+  content: string | null;
+  video_url: string | null;
+  pdf_url: string | null;
+  order: number;
+  is_published: boolean;
+  accepts_homework: boolean;
+  homework_materials: string | null;
+  homework_explanation_video_url: string | null;
+};
+
+/**
+ * Sync lessons without hitting Lesson(course_id, slug) unique collisions.
+ * Reordering / renumbering uses a temp-slug pass so two lessons never claim the same slug at once.
+ */
 export async function syncCourseLessons(params: {
   courseId: string;
   courseSlug: string;
@@ -32,13 +49,15 @@ export async function syncCourseLessons(params: {
   const existingIds = new Set(await getLessonIdsByCourseId(courseId));
   const keptIds = new Set<string>();
 
+  const updates: Array<{ id: string; index: number; payload: LessonPayload }> = [];
+  const creates: Array<{ index: number; payload: LessonPayload }> = [];
+
   for (let i = 0; i < lessons.length; i++) {
     const le = lessons[i];
     const order = contentOrder.findIndex((e) => e.type === "lesson" && e.index === i);
     const orderVal = order >= 0 ? order : i;
     const lessonId = le.id?.trim();
-    const lessonSlug = buildLessonSlug(normalizedCourseSlug, i + 1);
-    const payload = {
+    const payload: LessonPayload = {
       title: le.title?.trim() || `حصة ${i + 1}`,
       title_ar: le.titleAr?.trim() || null,
       content: le.content?.trim() || null,
@@ -52,24 +71,41 @@ export async function syncCourseLessons(params: {
     };
 
     if (lessonId && existingIds.has(lessonId)) {
-      await updateLesson(lessonId, {
-        ...payload,
-        slug: lessonSlug,
-      });
+      updates.push({ id: lessonId, index: i, payload });
       keptIds.add(lessonId);
     } else {
-      const created = await createLesson({
-        course_id: courseId,
-        ...payload,
-        slug: lessonSlug,
-      });
-      keptIds.add(created.id);
+      creates.push({ index: i, payload });
     }
   }
 
+  // Free slugs from removed lessons before renumbering.
   for (const id of existingIds) {
     if (!keptIds.has(id)) {
       await deleteLessonById(id);
     }
+  }
+
+  // Move kept lessons off target slugs (e.g. course1-4) so renumbering cannot collide.
+  for (const u of updates) {
+    await updateLesson(u.id, {
+      ...u.payload,
+      slug: `__sync-${u.id}`,
+    });
+  }
+
+  for (const u of updates) {
+    await updateLesson(u.id, {
+      ...u.payload,
+      slug: buildLessonSlug(normalizedCourseSlug, u.index + 1),
+    });
+  }
+
+  for (const c of creates) {
+    const created = await createLesson({
+      course_id: courseId,
+      ...c.payload,
+      slug: buildLessonSlug(normalizedCourseSlug, c.index + 1),
+    });
+    keptIds.add(created.id);
   }
 }
