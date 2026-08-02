@@ -74,7 +74,8 @@ CREATE TABLE IF NOT EXISTS "HomeworkSubmission" (
   file_url        TEXT,
   file_name       TEXT,
   lesson_id       TEXT REFERENCES "Lesson"(id) ON DELETE CASCADE,
-  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  marked_at       TIMESTAMPTZ
 );
 CREATE INDEX IF NOT EXISTS "HomeworkSubmission_course_id_idx" ON "HomeworkSubmission"(course_id);
 CREATE INDEX IF NOT EXISTS "HomeworkSubmission_user_id_idx" ON "HomeworkSubmission"(user_id);

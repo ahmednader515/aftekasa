@@ -6346,6 +6346,7 @@ async function ensureHomeworkSubmissionSchema(): Promise<void> {
       `;
     }
     await sql`CREATE INDEX IF NOT EXISTS "HomeworkSubmission_lesson_id_idx" ON "HomeworkSubmission"(lesson_id)`;
+    await sql`ALTER TABLE "HomeworkSubmission" ADD COLUMN IF NOT EXISTS marked_at TIMESTAMPTZ`;
     homeworkSubmissionSchemaEnsured = true;
   } catch {
     /* إنشاء الجدول أو الأعمدة قد يفشل بدون صلاحية */
@@ -6552,6 +6553,86 @@ export async function deleteHomeworkSubmissionsByIds(ids: string[]): Promise<num
 export async function deleteAllHomeworkSubmissions(): Promise<void> {
   await ensureHomeworkSubmissionSchema();
   await sql`DELETE FROM "HomeworkSubmission"`;
+}
+
+/** جلب تسليم واجب مع تفاصيل الدورة/الحصة — للمدرس يقتصر على كورساته */
+export async function getHomeworkSubmissionWithDetailsById(
+  submissionId: string,
+  options?: { teacherId?: string | null },
+): Promise<HomeworkSubmissionWithDetails | null> {
+  await ensureHomeworkSubmissionSchema();
+  try {
+    await sql`ALTER TABLE "HomeworkSubmission" ADD COLUMN IF NOT EXISTS marked_at TIMESTAMPTZ`;
+  } catch {
+    /* */
+  }
+  const teacherId = options?.teacherId?.trim() || null;
+  if (teacherId) {
+    await ensureCourseAssignedTeacherColumn();
+    const rows = await sql`
+      SELECT hs.*, c.title as course_title, c.title_ar as course_title_ar, u.name as user_name,
+             l.title as lesson_title, l.title_ar as lesson_title_ar
+      FROM "HomeworkSubmission" hs
+      JOIN "Course" c ON c.id = hs.course_id
+        AND (c.created_by_id = ${teacherId} OR c.assigned_teacher_id = ${teacherId})
+      JOIN "User" u ON u.id = hs.user_id
+      LEFT JOIN "Lesson" l ON l.id = hs.lesson_id
+      WHERE hs.id = ${submissionId}
+      LIMIT 1
+    `;
+    const row = rows[0] as Record<string, unknown> | undefined;
+    return row ? (rowToCamel(row) as HomeworkSubmissionWithDetails) : null;
+  }
+  const rows = await sql`
+    SELECT hs.*, c.title as course_title, c.title_ar as course_title_ar, u.name as user_name,
+           l.title as lesson_title, l.title_ar as lesson_title_ar
+    FROM "HomeworkSubmission" hs
+    JOIN "Course" c ON c.id = hs.course_id
+    JOIN "User" u ON u.id = hs.user_id
+    LEFT JOIN "Lesson" l ON l.id = hs.lesson_id
+    WHERE hs.id = ${submissionId}
+    LIMIT 1
+  `;
+  const row = rows[0] as Record<string, unknown> | undefined;
+  return row ? (rowToCamel(row) as HomeworkSubmissionWithDetails) : null;
+}
+
+/** تعليم تسليم واجب كمصحّح — يعيد الصف بعد التحديث، أو null إن لم يوجد */
+export async function markHomeworkSubmissionAsMarked(
+  submissionId: string,
+  options?: { teacherId?: string | null },
+): Promise<HomeworkSubmissionWithDetails | null> {
+  await ensureHomeworkSubmissionSchema();
+  try {
+    await sql`ALTER TABLE "HomeworkSubmission" ADD COLUMN IF NOT EXISTS marked_at TIMESTAMPTZ`;
+  } catch {
+    /* */
+  }
+  const teacherId = options?.teacherId?.trim() || null;
+  if (teacherId) {
+    await ensureCourseAssignedTeacherColumn();
+    const updated = await sql`
+      UPDATE "HomeworkSubmission" hs
+      SET marked_at = NOW()
+      FROM "Course" c
+      WHERE hs.id = ${submissionId}
+        AND hs.course_id = c.id
+        AND (c.created_by_id = ${teacherId} OR c.assigned_teacher_id = ${teacherId})
+        AND hs.marked_at IS NULL
+      RETURNING hs.id
+    `;
+    if (updated.length === 0) {
+      // قد يكون غير موجود، أو غير مملوك للمدرس، أو معلّماً مسبقاً
+      return getHomeworkSubmissionWithDetailsById(submissionId, { teacherId });
+    }
+  } else {
+    await sql`
+      UPDATE "HomeworkSubmission"
+      SET marked_at = NOW()
+      WHERE id = ${submissionId} AND marked_at IS NULL
+    `;
+  }
+  return getHomeworkSubmissionWithDetailsById(submissionId, teacherId ? { teacherId } : undefined);
 }
 
 // ----- QuizAttempt (يتطلب تشغيل scripts/add-quiz-attempts.sql) -----

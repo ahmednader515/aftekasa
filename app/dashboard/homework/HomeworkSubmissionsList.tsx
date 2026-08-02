@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { useRouter } from "next/navigation";
 import { useT } from "@/components/LocaleProvider";
 import { useDashboardTable, dateLocaleForUi } from "@/lib/i18n/dashboard-table";
 import { fillMessage } from "@/lib/i18n/interpolate";
@@ -14,6 +15,7 @@ type Row = {
   fileUrl: string | null;
   fileName: string | null;
   createdAt: string;
+  markedAt: string | null;
   courseTitle?: string;
   courseTitleAr?: string;
   userName?: string;
@@ -23,6 +25,7 @@ type Row = {
 
 export function HomeworkSubmissionsList({ allowDeleteAll = true }: { allowDeleteAll?: boolean } = {}) {
   const t = useT();
+  const router = useRouter();
   const L = "dashboard.homeworkList";
   const { locale, dir, thClass } = useDashboardTable();
   const dateLocale = dateLocaleForUi(locale);
@@ -34,6 +37,29 @@ export function HomeworkSubmissionsList({ allowDeleteAll = true }: { allowDelete
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [deleteLoading, setDeleteLoading] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [markingId, setMarkingId] = useState<string | null>(null);
+  const [chatLoadingId, setChatLoadingId] = useState<string | null>(null);
+
+  function mapRow(r: Record<string, unknown>): Row {
+    const markedRaw = r.markedAt ?? r.marked_at;
+    return {
+      id: String(r.id ?? ""),
+      courseId: r.courseId != null ? String(r.courseId) : r.course_id != null ? String(r.course_id) : undefined,
+      userId: r.userId != null ? String(r.userId) : r.user_id != null ? String(r.user_id) : undefined,
+      submissionType: String(r.submissionType ?? r.submission_type ?? ""),
+      linkUrl: (r.linkUrl ?? r.link_url) as string | null,
+      fileUrl: (r.fileUrl ?? r.file_url) as string | null,
+      fileName: (r.fileName ?? r.file_name) as string | null,
+      createdAt: String(r.createdAt ?? r.created_at ?? ""),
+      markedAt: markedRaw != null && String(markedRaw).trim() !== "" ? String(markedRaw) : null,
+      courseTitle: r.courseTitle != null ? String(r.courseTitle) : r.course_title != null ? String(r.course_title) : undefined,
+      courseTitleAr: r.courseTitleAr != null ? String(r.courseTitleAr) : r.course_title_ar != null ? String(r.course_title_ar) : undefined,
+      userName: r.userName != null ? String(r.userName) : r.user_name != null ? String(r.user_name) : undefined,
+      lessonTitle: r.lessonTitle != null ? String(r.lessonTitle) : r.lesson_title != null ? String(r.lesson_title) : undefined,
+      lessonTitleAr: r.lessonTitleAr != null ? String(r.lessonTitleAr) : r.lesson_title_ar != null ? String(r.lesson_title_ar) : undefined,
+    };
+  }
 
   function load() {
     setLoading(true);
@@ -62,21 +88,7 @@ export function HomeworkSubmissionsList({ allowDeleteAll = true }: { allowDelete
       .then((data) => {
         const rows = Array.isArray(data) ? data : [];
         setSelectedIds(new Set());
-        setList(rows.map((r: Record<string, unknown>) => ({
-          id: String(r.id ?? ""),
-          courseId: r.courseId != null ? String(r.courseId) : r.course_id != null ? String(r.course_id) : undefined,
-          userId: r.userId != null ? String(r.userId) : r.user_id != null ? String(r.user_id) : undefined,
-          submissionType: String(r.submissionType ?? r.submission_type ?? ""),
-          linkUrl: (r.linkUrl ?? r.link_url) as string | null,
-          fileUrl: (r.fileUrl ?? r.file_url) as string | null,
-          fileName: (r.fileName ?? r.file_name) as string | null,
-          createdAt: String(r.createdAt ?? r.created_at ?? ""),
-          courseTitle: r.courseTitle != null ? String(r.courseTitle) : r.course_title != null ? String(r.course_title) : undefined,
-          courseTitleAr: r.courseTitleAr != null ? String(r.courseTitleAr) : r.course_title_ar != null ? String(r.course_title_ar) : undefined,
-          userName: r.userName != null ? String(r.userName) : r.user_name != null ? String(r.user_name) : undefined,
-          lessonTitle: r.lessonTitle != null ? String(r.lessonTitle) : r.lesson_title != null ? String(r.lesson_title) : undefined,
-          lessonTitleAr: r.lessonTitleAr != null ? String(r.lessonTitleAr) : r.lesson_title_ar != null ? String(r.lesson_title_ar) : undefined,
-        })));
+        setList(rows.map((r: Record<string, unknown>) => mapRow(r)));
       })
       .catch((e) => {
         setList([]);
@@ -158,6 +170,64 @@ export function HomeworkSubmissionsList({ allowDeleteAll = true }: { allowDelete
     }
   }
 
+  async function handleMarkAsMarked(row: Row) {
+    if (!row.id || row.markedAt || markingId) return;
+    setActionError(null);
+    setMarkingId(row.id);
+    try {
+      const res = await fetch(`/api/homework/${encodeURIComponent(row.id)}/mark`, {
+        method: "POST",
+        credentials: "include",
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setActionError(data.error ?? t(`${L}.markFailed`));
+        return;
+      }
+      const markedAt =
+        data.markedAt != null
+          ? String(data.markedAt)
+          : data.submission
+            ? String(data.submission.markedAt ?? data.submission.marked_at ?? new Date().toISOString())
+            : new Date().toISOString();
+      setList((prev) =>
+        prev.map((r) => (r.id === row.id ? { ...r, markedAt } : r)),
+      );
+    } catch {
+      setActionError(t(`${L}.markFailedGeneric`));
+    } finally {
+      setMarkingId(null);
+    }
+  }
+
+  async function handleOpenChat(row: Row) {
+    if (!row.userId) {
+      setActionError(t(`${L}.missingStudent`));
+      return;
+    }
+    if (chatLoadingId) return;
+    setActionError(null);
+    setChatLoadingId(row.id);
+    try {
+      const res = await fetch("/api/messages/conversations", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ studentId: row.userId }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.id) {
+        setActionError(data.error ?? t(`${L}.openChatFailed`));
+        return;
+      }
+      router.push(`/dashboard/messages?c=${encodeURIComponent(String(data.id))}`);
+    } catch {
+      setActionError(t(`${L}.openChatFailed`));
+    } finally {
+      setChatLoadingId(null);
+    }
+  }
+
   if (loading && list.length === 0) {
     return (
       <div className="mt-6 rounded-[var(--radius-card)] border border-[var(--color-border)] bg-[var(--color-surface)] p-8 text-center text-[var(--color-muted)]">
@@ -201,6 +271,11 @@ export function HomeworkSubmissionsList({ allowDeleteAll = true }: { allowDelete
       {deleteError && (
         <p className="rounded-[var(--radius-btn)] bg-red-500/10 px-4 py-2 text-sm text-red-600 dark:text-red-400">
           {deleteError}
+        </p>
+      )}
+      {actionError && (
+        <p className="rounded-[var(--radius-btn)] bg-red-500/10 px-4 py-2 text-sm text-red-600 dark:text-red-400">
+          {actionError}
         </p>
       )}
       {list.length > 0 && (
@@ -249,6 +324,7 @@ export function HomeworkSubmissionsList({ allowDeleteAll = true }: { allowDelete
                 <th className={thClass}>{t(`${L}.colType`)}</th>
                 <th className={thClass}>{t(`${L}.colLinkOrFile`)}</th>
                 <th className={thClass}>{t(`${L}.colDate`)}</th>
+                <th className={thClass}>{t(`${L}.colActions`)}</th>
               </tr>
             </thead>
             <tbody>
@@ -295,6 +371,34 @@ export function HomeworkSubmissionsList({ allowDeleteAll = true }: { allowDelete
                       return new Date(row.createdAt).toLocaleString(dateLocale) || String(row.createdAt).slice(0, 16);
                     }
                   })() : dash}
+                  </td>
+                  <td className="p-3">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => handleMarkAsMarked(row)}
+                        disabled={!!row.markedAt || markingId === row.id}
+                        className={
+                          row.markedAt
+                            ? "rounded-[var(--radius-btn)] border border-emerald-500/40 bg-emerald-500/10 px-3 py-1.5 text-sm font-medium text-emerald-700 dark:text-emerald-400 disabled:opacity-80"
+                            : "rounded-[var(--radius-btn)] bg-[var(--color-primary)] px-3 py-1.5 text-sm font-medium text-white hover:bg-[var(--color-primary-hover)] disabled:opacity-50"
+                        }
+                      >
+                        {markingId === row.id
+                          ? t(`${L}.markAsMarkedBusy`)
+                          : row.markedAt
+                            ? t(`${L}.alreadyMarked`)
+                            : t(`${L}.markAsMarked`)}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleOpenChat(row)}
+                        disabled={!row.userId || chatLoadingId === row.id}
+                        className="rounded-[var(--radius-btn)] border border-[var(--color-border)] px-3 py-1.5 text-sm font-medium hover:bg-[var(--color-background)] disabled:opacity-50"
+                      >
+                        {chatLoadingId === row.id ? t(`${L}.openChatBusy`) : t(`${L}.openChat`)}
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}

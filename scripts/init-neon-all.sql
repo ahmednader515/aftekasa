@@ -726,8 +726,10 @@ CREATE TABLE IF NOT EXISTS "HomeworkSubmission" (
   link_url        TEXT,
   file_url        TEXT,
   file_name       TEXT,
-  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  marked_at       TIMESTAMPTZ
 );
+ALTER TABLE "HomeworkSubmission" ADD COLUMN IF NOT EXISTS marked_at TIMESTAMPTZ;
 SELECT _neon_create_index_if_column('HomeworkSubmission', 'HomeworkSubmission_course_id_idx', 'course_id');
 SELECT _neon_create_index_if_column('HomeworkSubmission', 'HomeworkSubmission_user_id_idx', 'user_id');
 SELECT _neon_create_index_if_column('HomeworkSubmission', 'HomeworkSubmission_created_at_idx', 'created_at');

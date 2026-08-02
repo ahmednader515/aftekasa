@@ -336,6 +336,8 @@ export interface HomeworkSubmission {
   file_url: string | null;
   file_name: string | null;
   created_at: Date;
+  /** When set, teacher/staff marked this submission as reviewed */
+  marked_at?: Date | null;
 }
 
 /** تقييم طالب لحصة (1..5) — صف واحد لكل طالب/حصة */
