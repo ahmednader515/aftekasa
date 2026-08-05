@@ -113,6 +113,7 @@ model Course {
   lessonProgress        LessonProgress[]
   lessonRatings         LessonRating[]
   homeworkSubmissions   HomeworkSubmission[]
+  subscriptionPlans     SubscriptionPlanCourse[]
 
   @@index([categoryId])
   @@index([createdById])
@@ -487,9 +488,22 @@ model SubscriptionPlan {
 
   category      Category?                  @relation(fields: [categoryId], references: [id], onDelete: SetNull)
   subscriptions UserPlatformSubscription[]
+  courses       SubscriptionPlanCourse[]
 
   @@index([isActive, sortOrder])
   @@index([categoryId])
+}
+
+/** Courses unlocked by a plan. Empty set = all paid published courses in the plan's category. */
+model SubscriptionPlanCourse {
+  planId   String @map("plan_id")
+  courseId String @map("course_id")
+
+  plan   SubscriptionPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
+  course Course           @relation(fields: [courseId], references: [id], onDelete: Cascade)
+
+  @@id([planId, courseId])
+  @@index([courseId])
 }
 
 model UserPlatformSubscription {

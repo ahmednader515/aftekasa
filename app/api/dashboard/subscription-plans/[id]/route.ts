@@ -15,6 +15,7 @@ type PlanPatch = {
   price?: number;
   is_active?: boolean;
   category_id?: string;
+  course_ids?: string[];
 };
 
 export async function PATCH(request: NextRequest, { params }: Params) {
@@ -31,6 +32,7 @@ export async function PATCH(request: NextRequest, { params }: Params) {
     price?: number;
     isActive?: boolean;
     categoryId?: string;
+    courseIds?: string[];
   };
   try {
     body = await request.json();
@@ -55,6 +57,12 @@ export async function PATCH(request: NextRequest, { params }: Params) {
     if (!categoryId) return NextResponse.json({ error: "يجب اختيار قسم للباقة" }, { status: 400 });
     patch.category_id = categoryId;
   }
+  if (body.courseIds !== undefined) {
+    if (!Array.isArray(body.courseIds)) {
+      return NextResponse.json({ error: "قائمة الدورات غير صالحة" }, { status: 400 });
+    }
+    patch.course_ids = body.courseIds.map((cid) => String(cid).trim()).filter(Boolean);
+  }
   if (Object.keys(patch).length === 0) {
     return NextResponse.json({ error: "لا توجد حقول للتحديث" }, { status: 400 });
   }
@@ -67,11 +75,13 @@ export async function PATCH(request: NextRequest, { params }: Params) {
       price: patch.price,
       is_active: patch.is_active,
       category_id: patch.category_id,
+      course_ids: patch.course_ids,
     });
     revalidatePublicCache(PUBLIC_CACHE_TAGS.subscriptions);
   } catch (e) {
     console.error("PATCH subscription-plans/[id]", e);
-    return NextResponse.json({ error: "فشل التحديث" }, { status: 500 });
+    const msg = e instanceof Error ? e.message : "فشل التحديث";
+    return NextResponse.json({ error: msg }, { status: 500 });
   }
   return NextResponse.json({ success: true });
 }

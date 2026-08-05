@@ -16,6 +16,7 @@ export type AdminPlanRow = {
   isActive: boolean;
   categoryId: string | null;
   categoryName: string | null;
+  courseIds: string[];
 };
 
 export type AdminCategoryOption = {
@@ -27,6 +28,7 @@ export type AdminExclusionCourse = {
   id: string;
   title: string;
   titleAr: string | null;
+  categoryId: string | null;
   categoryName: string | null;
   categoryNameAr: string | null;
   price: number;
@@ -37,6 +39,10 @@ function exclusionCourseLabel(c: AdminExclusionCourse): string {
   const title = (c.titleAr ?? c.title).trim() || c.title;
   const category = (c.categoryNameAr ?? c.categoryName ?? "").trim();
   return category ? `${title} (${category})` : title;
+}
+
+function planCourseLabel(c: AdminExclusionCourse): string {
+  return (c.titleAr ?? c.title).trim() || c.title;
 }
 
 export function SubscriptionsAdminClient({
@@ -73,6 +79,7 @@ export function SubscriptionsAdminClient({
   const [description, setDescription] = useState("");
   const [durationKind, setDurationKind] = useState<"week" | "month" | "year">("month");
   const [categoryId, setCategoryId] = useState("");
+  const [includedCourseIds, setIncludedCourseIds] = useState<Set<string>>(() => new Set());
   const [price, setPrice] = useState("");
   const [imageUrl, setImageUrl] = useState("");
   const [imageUploading, setImageUploading] = useState(false);
@@ -84,6 +91,7 @@ export function SubscriptionsAdminClient({
   const [editDescription, setEditDescription] = useState("");
   const [editDurationKind, setEditDurationKind] = useState<"week" | "month" | "year">("month");
   const [editCategoryId, setEditCategoryId] = useState("");
+  const [editIncludedCourseIds, setEditIncludedCourseIds] = useState<Set<string>>(() => new Set());
   const [editPrice, setEditPrice] = useState("");
   const [editImageUrl, setEditImageUrl] = useState("");
   const [editActive, setEditActive] = useState(true);
@@ -103,6 +111,35 @@ export function SubscriptionsAdminClient({
     if (!q) return exclusionCourses;
     return exclusionCourses.filter((c) => exclusionCourseLabel(c).toLowerCase().includes(q));
   }, [exclusionCourses, exclusionSearch]);
+
+  const createCategoryCourses = useMemo(
+    () => (categoryId ? exclusionCourses.filter((c) => c.categoryId === categoryId) : []),
+    [exclusionCourses, categoryId],
+  );
+  const editCategoryCourses = useMemo(
+    () => (editCategoryId ? exclusionCourses.filter((c) => c.categoryId === editCategoryId) : []),
+    [exclusionCourses, editCategoryId],
+  );
+
+  function toggleIncluded(courseId: string, mode: "create" | "edit") {
+    const setter = mode === "create" ? setIncludedCourseIds : setEditIncludedCourseIds;
+    setter((prev) => {
+      const next = new Set(prev);
+      if (next.has(courseId)) next.delete(courseId);
+      else next.add(courseId);
+      return next;
+    });
+  }
+
+  function onCategoryChange(nextCategoryId: string, mode: "create" | "edit") {
+    if (mode === "create") {
+      setCategoryId(nextCategoryId);
+      setIncludedCourseIds(new Set());
+    } else {
+      setEditCategoryId(nextCategoryId);
+      setEditIncludedCourseIds(new Set());
+    }
+  }
 
   const reloadPlans = useCallback(async () => {
     const res = await fetch("/api/dashboard/subscription-plans", { credentials: "include" });
@@ -202,6 +239,7 @@ export function SubscriptionsAdminClient({
         price: p,
         imageUrl: imageUrl.trim() || null,
         categoryId: categoryId.trim(),
+        courseIds: Array.from(includedCourseIds),
       }),
     });
     const data = await res.json().catch(() => ({}));
@@ -215,6 +253,7 @@ export function SubscriptionsAdminClient({
     setDescription("");
     setDurationKind("month");
     setCategoryId("");
+    setIncludedCourseIds(new Set());
     setPrice("");
     setImageUrl("");
     setImageError("");
@@ -230,6 +269,7 @@ export function SubscriptionsAdminClient({
     setEditDescription(row.description ?? "");
     setEditDurationKind(row.durationKind);
     setEditCategoryId(row.categoryId ?? "");
+    setEditIncludedCourseIds(new Set(row.courseIds ?? []));
     setEditPrice(String(row.price ?? 0));
     setEditImageUrl(row.imageUrl ?? "");
     setEditActive(row.isActive);
@@ -270,6 +310,7 @@ export function SubscriptionsAdminClient({
         imageUrl: editImageUrl.trim() || null,
         isActive: editActive,
         categoryId: editCategoryId.trim(),
+        courseIds: Array.from(editIncludedCourseIds),
       }),
     });
     const data = await res.json().catch(() => ({}));
@@ -456,7 +497,7 @@ export function SubscriptionsAdminClient({
             <select
               required
               value={categoryId}
-              onChange={(e) => setCategoryId(e.target.value)}
+              onChange={(e) => onCategoryChange(e.target.value, "create")}
               className="mt-1 w-full rounded-[var(--radius-btn)] border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2 text-[var(--color-foreground)]"
             >
               <option value="">{t(`${Su}.selectCategoryPlaceholder`)}</option>
@@ -466,6 +507,41 @@ export function SubscriptionsAdminClient({
                 </option>
               ))}
             </select>
+          </div>
+          <div>
+            <span className="block text-sm font-medium text-[var(--color-foreground)]">{t(`${Su}.labelIncludedCourses`)}</span>
+            <p className="mt-1 text-xs text-[var(--color-muted)]">{t(`${Su}.includedCoursesHint`)}</p>
+            {!categoryId ? (
+              <p className="mt-2 text-sm text-[var(--color-muted)]">{t(`${Su}.includedCoursesPickCategory`)}</p>
+            ) : createCategoryCourses.length === 0 ? (
+              <p className="mt-2 text-sm text-[var(--color-muted)]">{t(`${Su}.includedCoursesEmpty`)}</p>
+            ) : (
+              <ul className="mt-2 max-h-48 space-y-2 overflow-y-auto rounded-[var(--radius-btn)] border border-[var(--color-border)] bg-[var(--color-background)] p-3">
+                {createCategoryCourses.map((course) => (
+                  <li key={course.id}>
+                    <label className="flex cursor-pointer items-start gap-2">
+                      <input
+                        type="checkbox"
+                        checked={includedCourseIds.has(course.id)}
+                        onChange={() => toggleIncluded(course.id, "create")}
+                        className="mt-0.5"
+                      />
+                      <span className="text-sm text-[var(--color-foreground)]">
+                        {planCourseLabel(course)}
+                        <span className="ms-2 text-xs text-[var(--color-muted)]">
+                          {course.price} {egp}
+                        </span>
+                      </span>
+                    </label>
+                  </li>
+                ))}
+              </ul>
+            )}
+            {categoryId ? (
+              <p className="mt-2 text-xs text-[var(--color-muted)]">
+                {fillMessage(t(`${Su}.includedCoursesSelectedCount`), { count: includedCourseIds.size })}
+              </p>
+            ) : null}
           </div>
           <div>
             <label className="block text-sm font-medium text-[var(--color-foreground)]">{t(`${Su}.labelDuration`)}</label>
@@ -647,7 +723,7 @@ export function SubscriptionsAdminClient({
                 <select
                   required
                   value={editCategoryId}
-                  onChange={(e) => setEditCategoryId(e.target.value)}
+                  onChange={(e) => onCategoryChange(e.target.value, "edit")}
                   className="mt-1 w-full rounded-[var(--radius-btn)] border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2 text-[var(--color-foreground)]"
                 >
                   <option value="">{t(`${Su}.selectCategoryPlaceholder`)}</option>
@@ -657,6 +733,41 @@ export function SubscriptionsAdminClient({
                     </option>
                   ))}
                 </select>
+              </div>
+              <div>
+                <span className="block text-sm font-medium text-[var(--color-foreground)]">{t(`${Su}.labelIncludedCourses`)}</span>
+                <p className="mt-1 text-xs text-[var(--color-muted)]">{t(`${Su}.includedCoursesHint`)}</p>
+                {!editCategoryId ? (
+                  <p className="mt-2 text-sm text-[var(--color-muted)]">{t(`${Su}.includedCoursesPickCategory`)}</p>
+                ) : editCategoryCourses.length === 0 ? (
+                  <p className="mt-2 text-sm text-[var(--color-muted)]">{t(`${Su}.includedCoursesEmpty`)}</p>
+                ) : (
+                  <ul className="mt-2 max-h-48 space-y-2 overflow-y-auto rounded-[var(--radius-btn)] border border-[var(--color-border)] bg-[var(--color-background)] p-3">
+                    {editCategoryCourses.map((course) => (
+                      <li key={course.id}>
+                        <label className="flex cursor-pointer items-start gap-2">
+                          <input
+                            type="checkbox"
+                            checked={editIncludedCourseIds.has(course.id)}
+                            onChange={() => toggleIncluded(course.id, "edit")}
+                            className="mt-0.5"
+                          />
+                          <span className="text-sm text-[var(--color-foreground)]">
+                            {planCourseLabel(course)}
+                            <span className="ms-2 text-xs text-[var(--color-muted)]">
+                              {course.price} {egp}
+                            </span>
+                          </span>
+                        </label>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                {editCategoryId ? (
+                  <p className="mt-2 text-xs text-[var(--color-muted)]">
+                    {fillMessage(t(`${Su}.includedCoursesSelectedCount`), { count: editIncludedCourseIds.size })}
+                  </p>
+                ) : null}
               </div>
               <div>
                 <label className="block text-sm font-medium text-[var(--color-foreground)]">{t(`${Su}.labelDuration`)}</label>

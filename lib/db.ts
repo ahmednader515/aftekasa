@@ -73,20 +73,25 @@ if (!connectionString) throw new Error("DATABASE_URL غير معرّف");
 
 /**
  * Tagged-template SQL shim over Prisma (replaces @neondatabase/serverless neon()).
- * SELECT / WITH / RETURNING → $queryRaw; other statements → $executeRaw (returns [] like Neon).
+ * SELECT / WITH / RETURNING / unknown → $queryRaw; clear mutations → $executeRaw.
+ * Nested SQL fragments must use Prisma.sql`...`, not this helper (see courseRatingSelectSql).
  */
 export async function sql(strings: TemplateStringsArray, ...values: unknown[]): Promise<any[]> {
   const query = Prisma.sql(strings, ...values);
-  const joined = strings.join("?");
-  const head = joined.trimStart().slice(0, 12).toUpperCase();
-  const isQuery =
-    head.startsWith("SELECT") ||
-    head.startsWith("WITH") ||
-    /\bRETURNING\b/i.test(joined);
+  const joined = strings.join(" ");
+  const head = joined
+    .trimStart()
+    .replace(/^\/\*[\s\S]*?\*\//, "")
+    .trimStart()
+    .slice(0, 48)
+    .toUpperCase();
+  const isMutation =
+    /^(INSERT|UPDATE|DELETE|CREATE|ALTER|DROP|TRUNCATE|GRANT|REVOKE|COMMENT)\b/.test(head);
+  const hasReturning = /\bRETURNING\b/i.test(joined);
 
-  if (isQuery) {
+  if (!isMutation || hasReturning) {
     const rows = await prisma.$queryRaw(query);
-    return rows as any[];
+    return Array.isArray(rows) ? (rows as any[]) : [];
   }
   await prisma.$executeRaw(query);
   return [];
@@ -690,7 +695,7 @@ export async function updateUser(
   if (data.name !== undefined) await sql`UPDATE "User" SET name = ${data.name}, updated_at = NOW() WHERE id = ${id}`;
   if (data.email !== undefined) await sql`UPDATE "User" SET email = ${data.email}, updated_at = NOW() WHERE id = ${id}`;
   if (data.role !== undefined) await sql`UPDATE "User" SET role = ${data.role}, updated_at = NOW() WHERE id = ${id}`;
-  if (data.balance !== undefined) await sql`UPDATE "User" SET balance = ${data.balance}, updated_at = NOW() WHERE id = ${id}`;
+  if (data.balance !== undefined) await sql`UPDATE "User" SET balance = ${Number(data.balance)}, updated_at = NOW() WHERE id = ${id}`;
   if (data.password_hash !== undefined) await sql`UPDATE "User" SET password_hash = ${data.password_hash}, updated_at = NOW() WHERE id = ${id}`;
   if (data.student_number !== undefined) await sql`UPDATE "User" SET student_number = ${data.student_number}, updated_at = NOW() WHERE id = ${id}`;
   if (data.guardian_number !== undefined) await sql`UPDATE "User" SET guardian_number = ${data.guardian_number}, updated_at = NOW() WHERE id = ${id}`;
@@ -3410,6 +3415,7 @@ export type SubscriptionPlanPublic = {
   price: number;
   categoryId: string | null;
   categoryName: string | null;
+  courseIds: string[];
 };
 
 export type SubscriptionPlanAdmin = SubscriptionPlanPublic & { isActive: boolean };
@@ -3417,10 +3423,12 @@ export type SubscriptionPlanAdmin = SubscriptionPlanPublic & { isActive: boolean
 export type ActivePlatformSubscription = {
   planId: string;
   categoryId: string | null;
+  /** Empty = all paid courses in category (legacy / unset). */
+  courseIds: string[];
   expiresAt: Date;
 };
 
-function mapSubscriptionPlanRow(r: Record<string, unknown>): SubscriptionPlanPublic {
+function mapSubscriptionPlanRow(r: Record<string, unknown>, courseIds: string[] = []): SubscriptionPlanPublic {
   const cat = r.category_id ?? r.cat_id;
   const catName = r.cat_name_ar ?? r.cat_name;
   return {
@@ -3432,7 +3440,50 @@ function mapSubscriptionPlanRow(r: Record<string, unknown>): SubscriptionPlanPub
     price: Number(r.price ?? 0),
     categoryId: cat != null && String(cat).trim() ? String(cat) : null,
     categoryName: catName != null && String(catName).trim() ? String(catName) : null,
+    courseIds,
   };
+}
+
+async function listCourseIdsByPlanIds(planIds: string[]): Promise<Map<string, string[]>> {
+  const map = new Map<string, string[]>();
+  if (planIds.length === 0) return map;
+  for (const id of planIds) map.set(id, []);
+  const rows = await sql`
+    SELECT plan_id, course_id
+    FROM "SubscriptionPlanCourse"
+    WHERE plan_id IN (${Prisma.join(planIds)})
+  `;
+  for (const r of rows as Record<string, unknown>[]) {
+    const planId = String(r.plan_id ?? "");
+    const courseId = String(r.course_id ?? "");
+    if (!planId || !courseId) continue;
+    const list = map.get(planId) ?? [];
+    list.push(courseId);
+    map.set(planId, list);
+  }
+  return map;
+}
+
+export async function setSubscriptionPlanCourses(planId: string, courseIds: string[], categoryId: string): Promise<void> {
+  const unique = [...new Set(courseIds.map((id) => String(id).trim()).filter(Boolean))];
+  for (const courseId of unique) {
+    const course = await getCourseById(courseId);
+    if (!course) throw new Error("دورة غير موجودة ضمن الباقة");
+    const row = course as unknown as Record<string, unknown>;
+    const courseCat = courseCategoryIdFromRow(row);
+    if (courseCat !== categoryId) throw new Error("كل الدورات يجب أن تكون من قسم الباقة");
+    const pub = row.isPublished ?? row.is_published;
+    if (!pub) throw new Error("لا يمكن إضافة دورة غير منشورة");
+    if ((Number(row.price) || 0) <= 0) throw new Error("الاشتراك يشمل الدورات المدفوعة فقط");
+  }
+  await sql`DELETE FROM "SubscriptionPlanCourse" WHERE plan_id = ${planId}`;
+  for (const courseId of unique) {
+    await sql`
+      INSERT INTO "SubscriptionPlanCourse" (plan_id, course_id)
+      VALUES (${planId}, ${courseId})
+      ON CONFLICT DO NOTHING
+    `;
+  }
 }
 
 function courseCategoryIdFromRow(course: Record<string, unknown>): string | null {
@@ -3465,7 +3516,9 @@ export async function listActiveSubscriptionPlansPublic(): Promise<SubscriptionP
       WHERE sp.is_active = true
       ORDER BY sp.created_at DESC
     `;
-    return (rows as Record<string, unknown>[]).map(mapSubscriptionPlanRow);
+    const list = rows as Record<string, unknown>[];
+    const courseMap = await listCourseIdsByPlanIds(list.map((r) => String(r.id)));
+    return list.map((r) => mapSubscriptionPlanRow(r, courseMap.get(String(r.id)) ?? []));
   } catch {
     return [];
   }
@@ -3481,8 +3534,10 @@ export async function listSubscriptionPlansAll(): Promise<SubscriptionPlanAdmin[
     LEFT JOIN "Category" cat ON cat.id = sp.category_id
     ORDER BY sp.created_at DESC
   `;
-  return (rows as Record<string, unknown>[]).map((r) => ({
-    ...mapSubscriptionPlanRow(r),
+  const list = rows as Record<string, unknown>[];
+  const courseMap = await listCourseIdsByPlanIds(list.map((r) => String(r.id)));
+  return list.map((r) => ({
+    ...mapSubscriptionPlanRow(r, courseMap.get(String(r.id)) ?? []),
     isActive: Boolean(r.is_active),
   }));
 }
@@ -3495,6 +3550,7 @@ export async function createSubscriptionPlan(data: {
   price: number;
   is_active?: boolean;
   category_id: string;
+  course_ids?: string[];
 }): Promise<{ id: string }> {
   await ensurePlatformSubscriptionSchema();
   const categoryId = data.category_id?.trim();
@@ -3518,6 +3574,9 @@ export async function createSubscriptionPlan(data: {
       ${categoryId}
     )
   `;
+  if (data.course_ids !== undefined) {
+    await setSubscriptionPlanCourses(id, data.course_ids, categoryId);
+  }
   return { id };
 }
 
@@ -3531,6 +3590,7 @@ export async function updateSubscriptionPlan(
     price?: number;
     is_active?: boolean;
     category_id?: string;
+    course_ids?: string[];
   },
 ): Promise<void> {
   await ensurePlatformSubscriptionSchema();
@@ -3546,12 +3606,20 @@ export async function updateSubscriptionPlan(
   }
   if (data.price !== undefined) await sql`UPDATE "SubscriptionPlan" SET price = ${Math.max(0, data.price)}, updated_at = NOW() WHERE id = ${id}`;
   if (data.is_active !== undefined) await sql`UPDATE "SubscriptionPlan" SET is_active = ${data.is_active}, updated_at = NOW() WHERE id = ${id}`;
+  let categoryId = data.category_id?.trim();
   if (data.category_id !== undefined) {
-    const categoryId = data.category_id.trim();
     if (!categoryId) throw new Error("يجب اختيار قسم للباقة");
     const category = await getCategoryById(categoryId);
     if (!category) throw new Error("القسم المحدد غير موجود");
     await sql`UPDATE "SubscriptionPlan" SET category_id = ${categoryId}, updated_at = NOW() WHERE id = ${id}`;
+  }
+  if (data.course_ids !== undefined) {
+    if (!categoryId) {
+      const plan = await getSubscriptionPlanById(id);
+      categoryId = plan?.category_id ?? undefined;
+    }
+    if (!categoryId) throw new Error("يجب اختيار قسم للباقة");
+    await setSubscriptionPlanCourses(id, data.course_ids, categoryId);
   }
 }
 
@@ -3599,14 +3667,20 @@ export async function listActivePlatformSubscriptionsForUser(
       WHERE ups.user_id = ${userId} AND ups.expires_at > NOW()
       ORDER BY ups.expires_at DESC
     `;
-    return (rows as Record<string, unknown>[]).map((r) => {
+    const list = rows as Record<string, unknown>[];
+    const courseMap = await listCourseIdsByPlanIds(
+      list.map((r) => String(r.plan_id ?? "")).filter(Boolean),
+    );
+    return list.map((r) => {
       const expRaw = r.expires_at;
       const expiresAt = expRaw instanceof Date ? expRaw : new Date(String(expRaw));
       const categoryId =
         r.category_id != null && String(r.category_id).trim() ? String(r.category_id) : null;
+      const planId = String(r.plan_id ?? "");
       return {
-        planId: String(r.plan_id ?? ""),
+        planId,
         categoryId,
+        courseIds: courseMap.get(planId) ?? [],
         expiresAt,
       };
     });
@@ -3621,6 +3695,16 @@ function subscriptionCategoryMatches(
 ): boolean {
   if (planCategoryId == null) return true;
   return !!targetCategoryId && planCategoryId === targetCategoryId;
+}
+
+function subscriptionUnlocksCourse(
+  sub: ActivePlatformSubscription,
+  courseId: string,
+  courseCategoryId: string | null,
+): boolean {
+  if (!subscriptionCategoryMatches(sub.categoryId, courseCategoryId)) return false;
+  if (sub.courseIds.length === 0) return true;
+  return sub.courseIds.includes(courseId);
 }
 
 export async function userHasActiveSubscriptionForCategory(
@@ -3647,7 +3731,7 @@ export async function userHasActivePlatformSubscription(userId: string): Promise
   }
 }
 
-/** اشتراك نشط + دورة منشورة + سعرها > 0 + قسم الدورة يطابق قسم الباقة + غير مستثناة من الاشتراك */
+/** اشتراك نشط + دورة منشورة + سعرها > 0 + قسم الدورة يطابق قسم الباقة + ضمن الدورات المحددة (إن وُجدت) + غير مستثناة من الاشتراك */
 export async function userHasActivePlatformSubscriptionForPaidCourse(userId: string, courseId: string): Promise<boolean> {
   const subs = await listActivePlatformSubscriptionsForUser(userId);
   if (subs.length === 0) return false;
@@ -3662,7 +3746,7 @@ export async function userHasActivePlatformSubscriptionForPaidCourse(userId: str
   const excluded = courseRow.excludeFromSubscription ?? courseRow.exclude_from_subscription;
   if (excluded === true || excluded === "true" || excluded === 1) return false;
   const courseCategoryId = courseCategoryIdFromRow(courseRow);
-  return subs.some((sub) => subscriptionCategoryMatches(sub.categoryId, courseCategoryId));
+  return subs.some((sub) => subscriptionUnlocksCourse(sub, courseId, courseCategoryId));
 }
 
 /** تسجيل في الدورة أو اشتراك منصة نشط على دورة مدفوعة منشورة */
@@ -3849,12 +3933,13 @@ async function ensureLessonRatingsSchema(): Promise<void> {
   });
 }
 
-function courseRatingSelectSql() {
+/** SQL fragment for course rating aggregates — must be Prisma.sql (not the async sql helper) so it nests into parent queries */
+function courseRatingSelectSql(): Prisma.Sql {
   if (!lessonRatingsSchemaAvailable) {
-    return sql`NULL::numeric AS course_rating, 0::int AS course_rating_count`;
+    return Prisma.sql`NULL::numeric AS course_rating, 0::int AS course_rating_count`;
   }
   if (lessonRatingsUseChapterTable) {
-    return sql`
+    return Prisma.sql`
       (
         SELECT ROUND(AVG(lr.rating)::numeric, 2)
         FROM "LessonRating" lr
@@ -3869,7 +3954,7 @@ function courseRatingSelectSql() {
       ) AS course_rating_count
     `;
   }
-  return sql`
+  return Prisma.sql`
     (
       SELECT ROUND(AVG(lr.rating)::numeric, 2)
       FROM "LessonRating" lr
@@ -6083,6 +6168,15 @@ export async function getAccessibleCoursesForUser(userId: string): Promise<(Cour
             sp.category_id IS NULL
             OR (c.category_id IS NOT NULL AND sp.category_id = c.category_id)
           )
+          AND (
+            NOT EXISTS (
+              SELECT 1 FROM "SubscriptionPlanCourse" spc WHERE spc.plan_id = sp.id
+            )
+            OR EXISTS (
+              SELECT 1 FROM "SubscriptionPlanCourse" spc
+              WHERE spc.plan_id = sp.id AND spc.course_id = c.id
+            )
+          )
       )
       AND c.is_published = true
       AND COALESCE(c.price, 0) > 0
@@ -6104,6 +6198,7 @@ export type SubscriptionExclusionCourseOption = {
   id: string;
   title: string;
   titleAr: string | null;
+  categoryId: string | null;
   categoryName: string | null;
   categoryNameAr: string | null;
   price: number;
@@ -6114,7 +6209,7 @@ export type SubscriptionExclusionCourseOption = {
 export async function listCoursesForSubscriptionExclusionAdmin(): Promise<SubscriptionExclusionCourseOption[]> {
   await ensureCourseExcludeFromSubscriptionColumn();
   const rows = await sql`
-    SELECT c.id, c.title, c.title_ar, c.price, c.exclude_from_subscription,
+    SELECT c.id, c.title, c.title_ar, c.price, c.exclude_from_subscription, c.category_id,
            cat.name as cat_name, cat.name_ar as cat_name_ar
     FROM "Course" c
     LEFT JOIN "Category" cat ON c.category_id = cat.id
@@ -6125,6 +6220,7 @@ export async function listCoursesForSubscriptionExclusionAdmin(): Promise<Subscr
     id: String(r.id),
     title: String(r.title ?? ""),
     titleAr: r.title_ar != null ? String(r.title_ar) : null,
+    categoryId: r.category_id != null && String(r.category_id).trim() ? String(r.category_id) : null,
     categoryName: r.cat_name != null ? String(r.cat_name) : null,
     categoryNameAr: r.cat_name_ar != null ? String(r.cat_name_ar) : null,
     price: Number(r.price) || 0,

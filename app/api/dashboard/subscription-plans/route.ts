@@ -32,6 +32,7 @@ export async function POST(request: NextRequest) {
     price?: number;
     isActive?: boolean;
     categoryId?: string;
+    courseIds?: string[];
   };
   try {
     body = await request.json();
@@ -47,6 +48,9 @@ export async function POST(request: NextRequest) {
   const price = typeof body.price === "number" && Number.isFinite(body.price) ? Math.max(0, body.price) : 0;
   const categoryId = body.categoryId?.trim();
   if (!categoryId) return NextResponse.json({ error: "يجب اختيار قسم للباقة" }, { status: 400 });
+  const courseIds = Array.isArray(body.courseIds)
+    ? body.courseIds.map((id) => String(id).trim()).filter(Boolean)
+    : [];
   try {
     const { id } = await createSubscriptionPlan({
       name,
@@ -56,11 +60,13 @@ export async function POST(request: NextRequest) {
       price,
       is_active: body.isActive !== false,
       category_id: categoryId,
+      course_ids: courseIds,
     });
     revalidatePublicCache(PUBLIC_CACHE_TAGS.subscriptions);
     return NextResponse.json({ success: true, id });
   } catch (e) {
     console.error("POST subscription-plans", e);
-    return NextResponse.json({ error: "فشل إنشاء الباقة" }, { status: 500 });
+    const msg = e instanceof Error ? e.message : "فشل إنشاء الباقة";
+    return NextResponse.json({ error: msg }, { status: 500 });
   }
 }

@@ -1208,7 +1208,7 @@ export const enMessages: Messages = {
     subscriptionsAdmin: {
       pageTitle: "Weekly, monthly, or yearly subscriptions",
       pageIntro:
-        "Plans let students buy access for a period to all published paid courses in a section (except excluded ones) without buying each course. When the period ends, access returns to normal until renewal.",
+        "Plans let students buy timed access to the courses you include (or all paid courses in the section if none are selected), except globally excluded ones. When the period ends, access returns to normal until renewal.",
       visibilityTitle: "Subscriptions section on the site",
       visibilityIntro:
         'When enabled, the homepage shows an «Available subscriptions» section like «Choose teachers». When off, the section is hidden and students cannot buy new plans from the homepage.',
@@ -1221,6 +1221,15 @@ export const enMessages: Messages = {
       disabledHome: "Feature disabled — section removed from the site",
       addPlanTitle: "Add new plan",
       labelName: "Plan name",
+      labelCategory: "Section",
+      selectCategoryPlaceholder: "— Select section —",
+      categoryRequired: "Choose a section for the plan",
+      labelIncludedCourses: "Courses included in this subscription",
+      includedCoursesHint:
+        "Select courses unlocked by this plan. If none are selected, all published paid courses in the section are included.",
+      includedCoursesPickCategory: "Choose a section first to list its courses.",
+      includedCoursesEmpty: "No published paid courses in this section.",
+      includedCoursesSelectedCount: "Selected: {count}",
       labelDuration: "Duration",
       durationWeek: "Week",
       durationMonth: "Month",
@@ -1236,6 +1245,7 @@ export const enMessages: Messages = {
       currentPlansTitle: "Current plans",
       colImage: "Image",
       colName: "Name",
+      colCategory: "Section",
       colDuration: "Duration",
       colPrice: "Price",
       colActive: "Active",

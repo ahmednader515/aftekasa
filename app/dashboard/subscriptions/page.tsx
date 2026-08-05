@@ -7,6 +7,7 @@ import {
   listSubscriptionPlansAll,
   listCoursesForSubscriptionExclusionAdmin,
 } from "@/lib/db";
+import { isGradeStageSlug } from "@/lib/grade-stages";
 import {
   SubscriptionsAdminClient,
   type AdminPlanRow,
@@ -36,17 +37,21 @@ export default async function SubscriptionsDashboardPage() {
       isActive: r.isActive,
       categoryId: r.categoryId,
       categoryName: r.categoryName,
+      courseIds: r.courseIds ?? [],
     }));
     const cats = await getCategories();
-    categories = cats.map((c) => ({
-      id: c.id,
-      name: (c as { nameAr?: string | null }).nameAr?.trim() || c.name,
-    }));
+    categories = cats
+      .filter((c) => isGradeStageSlug(c.slug))
+      .map((c) => ({
+        id: c.id,
+        name: (c as { nameAr?: string | null }).nameAr?.trim() || c.name,
+      }));
     const courseRows = await listCoursesForSubscriptionExclusionAdmin();
     exclusionCourses = courseRows.map((c) => ({
       id: c.id,
       title: c.title,
       titleAr: c.titleAr,
+      categoryId: c.categoryId,
       categoryName: c.categoryName,
       categoryNameAr: c.categoryNameAr,
       price: c.price,
