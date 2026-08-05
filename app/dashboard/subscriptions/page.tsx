@@ -1,8 +1,18 @@
 import { getServerSession } from "next-auth";
 import { redirect } from "next/navigation";
 import { authOptions } from "@/lib/auth";
-import { getSubscriptionsFeatureEnabled, getCategories, listSubscriptionPlansAll } from "@/lib/db";
-import { SubscriptionsAdminClient, type AdminPlanRow, type AdminCategoryOption } from "./SubscriptionsAdminClient";
+import {
+  getSubscriptionsFeatureEnabled,
+  getCategories,
+  listSubscriptionPlansAll,
+  listCoursesForSubscriptionExclusionAdmin,
+} from "@/lib/db";
+import {
+  SubscriptionsAdminClient,
+  type AdminPlanRow,
+  type AdminCategoryOption,
+  type AdminExclusionCourse,
+} from "./SubscriptionsAdminClient";
 
 export default async function SubscriptionsDashboardPage() {
   const session = await getServerSession(authOptions);
@@ -13,6 +23,7 @@ export default async function SubscriptionsDashboardPage() {
   const enabled = await getSubscriptionsFeatureEnabled();
   let plans: AdminPlanRow[] = [];
   let categories: AdminCategoryOption[] = [];
+  let exclusionCourses: AdminExclusionCourse[] = [];
   try {
     const rows = await listSubscriptionPlansAll();
     plans = rows.map((r) => ({
@@ -31,12 +42,28 @@ export default async function SubscriptionsDashboardPage() {
       id: c.id,
       name: (c as { nameAr?: string | null }).nameAr?.trim() || c.name,
     }));
+    const courseRows = await listCoursesForSubscriptionExclusionAdmin();
+    exclusionCourses = courseRows.map((c) => ({
+      id: c.id,
+      title: c.title,
+      titleAr: c.titleAr,
+      categoryName: c.categoryName,
+      categoryNameAr: c.categoryNameAr,
+      price: c.price,
+      excludeFromSubscription: c.excludeFromSubscription,
+    }));
   } catch {
     plans = [];
     categories = [];
+    exclusionCourses = [];
   }
 
   return (
-    <SubscriptionsAdminClient initialEnabled={enabled} initialPlans={plans} categories={categories} />
+    <SubscriptionsAdminClient
+      initialEnabled={enabled}
+      initialPlans={plans}
+      categories={categories}
+      initialExclusionCourses={exclusionCourses}
+    />
   );
 }

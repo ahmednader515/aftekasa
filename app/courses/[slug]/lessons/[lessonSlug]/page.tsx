@@ -28,6 +28,7 @@ import { pickLocalizedText } from "@/lib/i18n/localized-field";
 import { isCourseSegmentId } from "@/lib/legacy-schema";
 import { prepareLessonContentForDisplay } from "@/lib/lesson-content";
 import { CourseContentAccessDenied } from "@/components/CourseContentAccessDenied";
+import { LessonAttachmentPreview } from "@/components/LessonAttachmentPreview";
 
 type Props = { params: Promise<{ slug: string; lessonSlug: string }> };
 
@@ -281,14 +282,14 @@ export default async function LessonPage({ params }: Props) {
           >
             {(lessonObj.pdfUrl ?? lessonObj.pdf_url) ? (
               <div className="mt-6">
-                <a
-                  href={String(lessonObj.pdfUrl ?? lessonObj.pdf_url)}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex items-center gap-2 rounded-[var(--radius-btn)] bg-[var(--color-primary)] px-4 py-2 text-sm font-medium text-white hover:bg-[var(--color-primary-hover)]"
-                >
-                  📄 {t("courses.downloadPdf", "Download / View PDF")}
-                </a>
+                <LessonAttachmentPreview
+                  url={String(lessonObj.pdfUrl ?? lessonObj.pdf_url)}
+                  viewLabel={t("courses.downloadPdf", "Download / View file")}
+                  unavailableLabel={t(
+                    "courses.filePreviewUnavailable",
+                    "Preview is not available for this file type",
+                  )}
+                />
               </div>
             ) : null}
 

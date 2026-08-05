@@ -317,6 +317,8 @@ export interface Course {
   created_by_id: string | null;
   assigned_teacher_id?: string | null;
   accepts_homework?: boolean;
+  /** When true, course is never covered by platform subscription — must be purchased individually */
+  exclude_from_subscription?: boolean;
   /** متوسط تقييم الكورس المحسوب من كل تقييمات دروسه */
   course_rating?: number | null;
   /** عدد تقييمات الدروس المستخدمة في متوسط الكورس */

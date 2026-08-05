@@ -24,6 +24,7 @@ import { parseHomeworkMaterials, type HomeworkMaterial } from "@/lib/homework-ma
 import { GRADE_STAGE_SLUGS, isGradeStageSlug } from "@/lib/grade-stages";
 import { uploadWithProgress } from "@/lib/upload-with-progress";
 import { UploadProgressBar } from "@/components/UploadProgressBar";
+import { LessonAttachmentPreview } from "@/components/LessonAttachmentPreview";
 
 export type { ContentOrderEntry };
 
@@ -751,17 +752,20 @@ export function EditCourseForm({
               <div>
                 <label className="block text-xs text-[var(--color-muted)]">{t(`${Cf}.lessonPdfOptional`)}</label>
                 {lesson.pdfUrl ? (
-                  <div className="mt-1 flex items-center gap-2">
-                    <a href={lesson.pdfUrl} target="_blank" rel="noopener noreferrer" className="text-sm text-[var(--color-primary)] hover:underline">{t(`${Cf}.viewPdf`)}</a>
-                    <button type="button" onClick={() => updateLesson(i, "pdfUrl", "")} className="text-sm text-red-600 hover:underline">{t(`${Cf}.remove`)}</button>
-                  </div>
+                  <LessonAttachmentPreview
+                    url={lesson.pdfUrl}
+                    compact
+                    viewLabel={t(`${Cf}.viewPdf`)}
+                    removeLabel={t(`${Cf}.remove`)}
+                    unavailableLabel={t(`${Cf}.filePreviewUnavailable`, "Preview is not available for this file type")}
+                    onRemove={() => updateLesson(i, "pdfUrl", "")}
+                  />
                 ) : (
                   <>
                     <label className="mt-1 inline-block cursor-pointer rounded-[var(--radius-btn)] border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm">
                       {t(`${Cf}.choosePdfUpload`)}
                       <input
                         type="file"
-                        accept="application/pdf"
                         className="hidden"
                         disabled={pdfUploading !== null}
                         onChange={async (e) => {

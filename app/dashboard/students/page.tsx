@@ -71,11 +71,19 @@ export default async function StudentsPage() {
 
   const coursesPlain = coursesList.map((c) => {
     const row = c as unknown as Record<string, unknown>;
+    const cat = (row.category ?? null) as Record<string, unknown> | null;
     return {
       id: String(row.id ?? ""),
       title: String(row.title ?? ""),
       titleAr: (row.titleAr != null ? String(row.titleAr) : null) as string | null,
       slug: String(row.slug ?? ""),
+      categoryName: cat?.name != null ? String(cat.name) : null,
+      categoryNameAr:
+        cat?.nameAr != null
+          ? String(cat.nameAr)
+          : cat?.name_ar != null
+            ? String(cat.name_ar)
+            : null,
     };
   });
 

@@ -3724,10 +3724,11 @@ export async function userHasActivePlatformSubscription(userId: string): Promise
   }
 }
 
-/** اشتراك نشط + دورة منشورة + سعرها > 0 + قسم الدورة يطابق قسم الباقة */
+/** اشتراك نشط + دورة منشورة + سعرها > 0 + قسم الدورة يطابق قسم الباقة + غير مستثناة من الاشتراك */
 export async function userHasActivePlatformSubscriptionForPaidCourse(userId: string, courseId: string): Promise<boolean> {
   const subs = await listActivePlatformSubscriptionsForUser(userId);
   if (subs.length === 0) return false;
+  await ensureCourseExcludeFromSubscriptionColumn();
   const course = await getCourseById(courseId);
   if (!course) return false;
   const courseRow = course as unknown as Record<string, unknown>;
@@ -3735,6 +3736,8 @@ export async function userHasActivePlatformSubscriptionForPaidCourse(userId: str
   if (!pub) return false;
   const price = Number(courseRow.price) || 0;
   if (price <= 0) return false;
+  const excluded = courseRow.excludeFromSubscription ?? courseRow.exclude_from_subscription;
+  if (excluded === true || excluded === "true" || excluded === 1) return false;
   const courseCategoryId = courseCategoryIdFromRow(courseRow);
   return subs.some((sub) => subscriptionCategoryMatches(sub.categoryId, courseCategoryId));
 }
@@ -4288,6 +4291,16 @@ async function ensureCourseAssignedTeacherColumn(): Promise<void> {
       }
     }
     await repairAdminAssignedCourseOwnership();
+  });
+}
+
+async function ensureCourseExcludeFromSubscriptionColumn(): Promise<void> {
+  return ensureOnce("ensureCourseExcludeFromSubscriptionColumn", async () => {
+    try {
+      await sql`ALTER TABLE "Course" ADD COLUMN IF NOT EXISTS exclude_from_subscription BOOLEAN NOT NULL DEFAULT false`;
+    } catch {
+      /* DDL may be unavailable */
+    }
   });
 }
 
@@ -6118,6 +6131,7 @@ export async function getAccessibleCoursesForUser(userId: string): Promise<(Cour
   }
   await ensurePlatformSubscriptionSchema();
   await ensureLessonRatingsSchema();
+  await ensureCourseExcludeFromSubscriptionColumn();
   const rows = await sql`
     SELECT c.*, ${courseRatingSelectSql()}, cat.id as cat_id, cat.name as cat_name, cat.name_ar as cat_name_ar, cat.slug as cat_slug
     FROM "Course" c
@@ -6137,11 +6151,19 @@ export async function getAccessibleCoursesForUser(userId: string): Promise<(Cour
     )
     OR (
       EXISTS (
-        SELECT 1 FROM "UserPlatformSubscription" ups
-        WHERE ups.user_id = ${userId} AND ups.expires_at > NOW()
+        SELECT 1
+        FROM "UserPlatformSubscription" ups
+        LEFT JOIN "SubscriptionPlan" sp ON sp.id = ups.plan_id
+        WHERE ups.user_id = ${userId}
+          AND ups.expires_at > NOW()
+          AND (
+            sp.category_id IS NULL
+            OR (c.category_id IS NOT NULL AND sp.category_id = c.category_id)
+          )
       )
       AND c.is_published = true
       AND COALESCE(c.price, 0) > 0
+      AND COALESCE(c.exclude_from_subscription, false) = false
     )
     ORDER BY c.created_at DESC
   `;
@@ -6153,6 +6175,57 @@ export async function getAccessibleCoursesForUser(userId: string): Promise<(Cour
     const base = rowToCamel(rest) ?? {};
     return { ...base, category };
   }) as unknown as (Course & { category?: Category })[];
+}
+
+export type SubscriptionExclusionCourseOption = {
+  id: string;
+  title: string;
+  titleAr: string | null;
+  categoryName: string | null;
+  categoryNameAr: string | null;
+  price: number;
+  excludeFromSubscription: boolean;
+};
+
+/** قائمة الكورسات المدفوعة المنشورة لإدارة الاستثناء من الاشتراك */
+export async function listCoursesForSubscriptionExclusionAdmin(): Promise<SubscriptionExclusionCourseOption[]> {
+  await ensureCourseExcludeFromSubscriptionColumn();
+  const rows = await sql`
+    SELECT c.id, c.title, c.title_ar, c.price, c.exclude_from_subscription,
+           cat.name as cat_name, cat.name_ar as cat_name_ar
+    FROM "Course" c
+    LEFT JOIN "Category" cat ON c.category_id = cat.id
+    WHERE c.is_published = true AND COALESCE(c.price, 0) > 0
+    ORDER BY cat."order" ASC NULLS LAST, c.title_ar ASC NULLS LAST, c.title ASC
+  `;
+  return (rows as Record<string, unknown>[]).map((r) => ({
+    id: String(r.id),
+    title: String(r.title ?? ""),
+    titleAr: r.title_ar != null ? String(r.title_ar) : null,
+    categoryName: r.cat_name != null ? String(r.cat_name) : null,
+    categoryNameAr: r.cat_name_ar != null ? String(r.cat_name_ar) : null,
+    price: Number(r.price) || 0,
+    excludeFromSubscription: Boolean(r.exclude_from_subscription),
+  }));
+}
+
+/** حفظ الكورسات المستثناة من الاشتراك — courseIds هي المستثناة فقط */
+export async function setCoursesExcludedFromSubscription(courseIds: string[]): Promise<number> {
+  await ensureCourseExcludeFromSubscriptionColumn();
+  const unique = [...new Set(courseIds.map((id) => String(id).trim()).filter(Boolean))];
+  await sql`UPDATE "Course" SET exclude_from_subscription = false, updated_at = NOW() WHERE exclude_from_subscription = true`;
+  if (unique.length === 0) return 0;
+  let n = 0;
+  for (const id of unique) {
+    const rows = await sql`
+      UPDATE "Course"
+      SET exclude_from_subscription = true, updated_at = NOW()
+      WHERE id = ${id} AND is_published = true AND COALESCE(price, 0) > 0
+      RETURNING id
+    `;
+    n += rows.length;
+  }
+  return n;
 }
 
 export type LessonRatingSummary = {

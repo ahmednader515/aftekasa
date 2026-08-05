@@ -12,7 +12,14 @@ import {
   SIGNUP_STUDY_TYPES,
 } from "@/lib/signup-options";
 
-type Course = { id: string; title: string; titleAr: string | null; slug: string };
+type Course = {
+  id: string;
+  title: string;
+  titleAr: string | null;
+  slug: string;
+  categoryName?: string | null;
+  categoryNameAr?: string | null;
+};
 
 type Enrollment = {
   id: string;
@@ -48,6 +55,12 @@ const EDIT_ROLE_OPTIONS = ["STUDENT", "ASSISTANT_ADMIN", "ADMIN"] as const;
 function translateRole(role: string, t: (key: string, fallback?: string) => string): string {
   const key = ROLE_HEADER_KEYS[role];
   return key ? t(key, role) : role;
+}
+
+function courseDisplayLabel(c: Course): string {
+  const title = (c.titleAr ?? c.title).trim() || c.title;
+  const category = (c.categoryNameAr ?? c.categoryName ?? "").trim();
+  return category ? `${title} (${category})` : title;
 }
 
 export function StudentsList({
@@ -441,12 +454,17 @@ export function StudentsList({
                 </p>
               ) : (
                 <ul className="space-y-2">
-                  {coursesStudent.enrollments.map((e) => (
+                  {coursesStudent.enrollments.map((e) => {
+                    const fromCatalog = courses.find((c) => c.id === e.courseId);
+                    const labelCourse = fromCatalog
+                      ? { ...e.course, categoryName: fromCatalog.categoryName, categoryNameAr: fromCatalog.categoryNameAr }
+                      : e.course;
+                    return (
                     <li
                       key={e.courseId}
                       className="flex items-center justify-between rounded border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2"
                     >
-                      <span className="text-sm">{e.course.titleAr ?? e.course.title}</span>
+                      <span className="text-sm">{courseDisplayLabel(labelCourse)}</span>
                       <button
                         type="button"
                         onClick={() => handleRemoveCourse(e.courseId)}
@@ -456,7 +474,8 @@ export function StudentsList({
                         {t("dashboard.studentsPage.remove", "Remove")}
                       </button>
                     </li>
-                  ))}
+                    );
+                  })}
                 </ul>
               )}
               {availableToAdd.length > 0 && (
@@ -475,7 +494,7 @@ export function StudentsList({
                       </option>
                       {availableToAdd.map((c) => (
                         <option key={c.id} value={c.id}>
-                          {c.titleAr ?? c.title}
+                          {courseDisplayLabel(c)}
                         </option>
                       ))}
                     </select>

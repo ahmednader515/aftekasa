@@ -5,8 +5,15 @@ import { uploadToR2, isR2Configured, getMissingR2EnvVars } from "@/lib/r2";
 import { MAX_PDF_BYTES, MAX_PDF_MB } from "@/lib/upload-limits";
 
 const MAX_SIZE = MAX_PDF_BYTES;
-const ALLOWED_TYPE = "application/pdf";
 
+function safeFileExtension(fileName: string): string {
+  const raw = fileName.split(".").pop()?.toLowerCase() || "";
+  const cleaned = raw.replace(/[^a-z0-9]/g, "");
+  if (!cleaned || cleaned.length > 10) return "bin";
+  return cleaned;
+}
+
+/** رفع ملف مرفق للحصة (أي نوع ملف، حتى 50 ميجابايت) — المسار التاريخي /api/upload/pdf */
 export async function POST(request: NextRequest) {
   const session = await getServerSession(authOptions);
   const role = session?.user.role;
@@ -39,11 +46,8 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "لم يُرفع أي ملف" }, { status: 400 });
   }
 
-  if (file.type !== ALLOWED_TYPE) {
-    return NextResponse.json(
-      { error: "نوع الملف غير مدعوم. استخدم ملف PDF فقط." },
-      { status: 400 }
-    );
+  if (file.size <= 0) {
+    return NextResponse.json({ error: "الملف فارغ" }, { status: 400 });
   }
 
   if (file.size > MAX_SIZE) {
@@ -53,13 +57,13 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const ext = file.name.split(".").pop()?.toLowerCase() || "pdf";
-  const safeExt = ext === "pdf" ? "pdf" : "pdf";
+  const safeExt = safeFileExtension(file.name);
+  const contentType = file.type?.trim() || "application/octet-stream";
   const key = `pdfs/${Date.now()}-${Math.random().toString(36).slice(2, 10)}.${safeExt}`;
 
   try {
     const buffer = Buffer.from(await file.arrayBuffer());
-    const { url: uploadedUrl } = await uploadToR2(buffer, key, file.type);
+    const { url: uploadedUrl } = await uploadToR2(buffer, key, contentType);
 
     const baseUrl = (uploadedUrl ? null : process.env.R2_PUBLIC_URL?.trim()?.replace(/\/$/, "")) || null;
     const url = uploadedUrl || (baseUrl ? `${baseUrl}/${key}` : null);
@@ -71,9 +75,9 @@ export async function POST(request: NextRequest) {
       }, { status: 200 });
     }
 
-    return NextResponse.json({ url, key });
+    return NextResponse.json({ url, key, fileName: file.name });
   } catch (e) {
-    console.error("R2 PDF upload error:", e);
+    console.error("R2 file upload error:", e);
     return NextResponse.json(
       { error: e instanceof Error ? e.message : "فشل رفع الملف" },
       { status: 500 }

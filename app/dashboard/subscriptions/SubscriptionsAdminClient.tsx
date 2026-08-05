@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useT } from "@/components/LocaleProvider";
 import { useDashboardTable } from "@/lib/i18n/dashboard-table";
@@ -23,14 +23,32 @@ export type AdminCategoryOption = {
   name: string;
 };
 
+export type AdminExclusionCourse = {
+  id: string;
+  title: string;
+  titleAr: string | null;
+  categoryName: string | null;
+  categoryNameAr: string | null;
+  price: number;
+  excludeFromSubscription: boolean;
+};
+
+function exclusionCourseLabel(c: AdminExclusionCourse): string {
+  const title = (c.titleAr ?? c.title).trim() || c.title;
+  const category = (c.categoryNameAr ?? c.categoryName ?? "").trim();
+  return category ? `${title} (${category})` : title;
+}
+
 export function SubscriptionsAdminClient({
   initialEnabled,
   initialPlans,
   categories,
+  initialExclusionCourses,
 }: {
   initialEnabled: boolean;
   initialPlans: AdminPlanRow[];
   categories: AdminCategoryOption[];
+  initialExclusionCourses: AdminExclusionCourse[];
 }) {
   const router = useRouter();
   const t = useT();
@@ -73,12 +91,71 @@ export function SubscriptionsAdminClient({
   const [editImageUploading, setEditImageUploading] = useState(false);
   const [editImageError, setEditImageError] = useState("");
 
+  const [exclusionCourses, setExclusionCourses] = useState(initialExclusionCourses);
+  const [excludedIds, setExcludedIds] = useState<Set<string>>(
+    () => new Set(initialExclusionCourses.filter((c) => c.excludeFromSubscription).map((c) => c.id)),
+  );
+  const [exclusionSaving, setExclusionSaving] = useState(false);
+  const [exclusionSearch, setExclusionSearch] = useState("");
+
+  const filteredExclusionCourses = useMemo(() => {
+    const q = exclusionSearch.trim().toLowerCase();
+    if (!q) return exclusionCourses;
+    return exclusionCourses.filter((c) => exclusionCourseLabel(c).toLowerCase().includes(q));
+  }, [exclusionCourses, exclusionSearch]);
+
   const reloadPlans = useCallback(async () => {
     const res = await fetch("/api/dashboard/subscription-plans", { credentials: "include" });
     if (!res.ok) return;
     const data = (await res.json()) as { plans?: AdminPlanRow[] };
     if (data.plans) setPlans(data.plans);
   }, []);
+
+  async function reloadExclusionCourses() {
+    const res = await fetch("/api/dashboard/subscription-excluded-courses", { credentials: "include" });
+    if (!res.ok) return;
+    const data = (await res.json()) as {
+      courses?: AdminExclusionCourse[];
+      excludedCourseIds?: string[];
+    };
+    if (data.courses) setExclusionCourses(data.courses);
+    if (Array.isArray(data.excludedCourseIds)) setExcludedIds(new Set(data.excludedCourseIds));
+  }
+
+  function toggleExcluded(courseId: string) {
+    setExcludedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(courseId)) next.delete(courseId);
+      else next.add(courseId);
+      return next;
+    });
+  }
+
+  async function saveExclusions() {
+    setError("");
+    setSuccess("");
+    setExclusionSaving(true);
+    try {
+      const res = await fetch("/api/dashboard/subscription-excluded-courses", {
+        method: "PUT",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ courseIds: Array.from(excludedIds) }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setError(data.error ?? t(`${Su}.exclusionSaveFailed`));
+        return;
+      }
+      setSuccess(t(`${Su}.exclusionSaveSuccess`));
+      await reloadExclusionCourses();
+      router.refresh();
+    } catch {
+      setError(t(`${Su}.connectionFailed`));
+    } finally {
+      setExclusionSaving(false);
+    }
+  }
 
   async function patchEnabled(next: boolean) {
     setError("");
@@ -297,6 +374,62 @@ export function SubscriptionsAdminClient({
           </button>
           <span className="text-sm text-[var(--color-muted)]">{enabled ? t(`${Su}.statusOn`) : t(`${Su}.statusOff`)}</span>
         </div>
+      </div>
+
+      <div className="rounded-[var(--radius-card)] border border-[var(--color-border)] bg-[var(--color-surface)] p-6 shadow-[var(--shadow-card)]">
+        <h3 className="text-lg font-semibold text-[var(--color-foreground)]">{t(`${Su}.exclusionTitle`)}</h3>
+        <p className="mt-2 text-sm text-[var(--color-muted)]">{t(`${Su}.exclusionIntro`)}</p>
+        {exclusionCourses.length === 0 ? (
+          <p className="mt-4 text-sm text-[var(--color-muted)]">{t(`${Su}.exclusionEmpty`)}</p>
+        ) : (
+          <>
+            <div className="mt-4">
+              <input
+                type="search"
+                value={exclusionSearch}
+                onChange={(e) => setExclusionSearch(e.target.value)}
+                placeholder={t(`${Su}.exclusionSearchPlaceholder`)}
+                className="w-full max-w-md rounded-[var(--radius-btn)] border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2 text-sm text-[var(--color-foreground)]"
+              />
+            </div>
+            <ul className="mt-4 max-h-72 space-y-2 overflow-y-auto">
+              {filteredExclusionCourses.map((course) => (
+                <li key={course.id}>
+                  <label className="flex cursor-pointer items-start gap-2 rounded-[var(--radius-btn)] border border-[var(--color-border)] px-3 py-2 hover:border-[var(--color-primary)]">
+                    <input
+                      type="checkbox"
+                      checked={excludedIds.has(course.id)}
+                      onChange={() => toggleExcluded(course.id)}
+                      className="mt-0.5"
+                    />
+                    <span className="text-sm text-[var(--color-foreground)]">
+                      {exclusionCourseLabel(course)}
+                      <span className="ms-2 text-xs text-[var(--color-muted)]">
+                        {course.price} {egp}
+                      </span>
+                    </span>
+                  </label>
+                </li>
+              ))}
+            </ul>
+            {filteredExclusionCourses.length === 0 ? (
+              <p className="mt-3 text-sm text-[var(--color-muted)]">{t(`${Su}.exclusionNoSearchResults`)}</p>
+            ) : null}
+            <div className="mt-4 flex flex-wrap items-center gap-3">
+              <button
+                type="button"
+                onClick={() => void saveExclusions()}
+                disabled={exclusionSaving}
+                className="rounded-[var(--radius-btn)] bg-[var(--color-primary)] px-4 py-2 text-sm font-medium text-white hover:bg-[var(--color-primary-hover)] disabled:opacity-50"
+              >
+                {exclusionSaving ? t(`${Su}.exclusionSaving`) : t(`${Su}.exclusionSave`)}
+              </button>
+              <span className="text-xs text-[var(--color-muted)]">
+                {fillMessage(t(`${Su}.exclusionSelectedCount`), { count: excludedIds.size })}
+              </span>
+            </div>
+          </>
+        )}
       </div>
 
       {error ? (
