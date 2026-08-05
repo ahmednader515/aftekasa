@@ -2,7 +2,8 @@ import "dotenv/config";
 import { randomUUID } from "crypto";
 import { cache } from "react";
 import { unstable_cache } from "next/cache";
-import { neon } from "@neondatabase/serverless";
+import { Prisma } from "@prisma/client";
+import { prisma } from "./prisma";
 import type {
   User,
   UserRole,
@@ -70,29 +71,33 @@ import {
 const connectionString = process.env.DATABASE_URL;
 if (!connectionString) throw new Error("DATABASE_URL غير معرّف");
 
-/** عميل Neon — الاتصال المباشر بقاعدة البيانات Neon (بدون Prisma) */
-export const sql = neon(connectionString);
+/**
+ * Tagged-template SQL shim over Prisma (replaces @neondatabase/serverless neon()).
+ * SELECT / WITH / RETURNING → $queryRaw; other statements → $executeRaw (returns [] like Neon).
+ */
+export async function sql(strings: TemplateStringsArray, ...values: unknown[]): Promise<any[]> {
+  const query = Prisma.sql(strings, ...values);
+  const joined = strings.join("?");
+  const head = joined.trimStart().slice(0, 12).toUpperCase();
+  const isQuery =
+    head.startsWith("SELECT") ||
+    head.startsWith("WITH") ||
+    /\bRETURNING\b/i.test(joined);
+
+  if (isQuery) {
+    const rows = await prisma.$queryRaw(query);
+    return rows as any[];
+  }
+  await prisma.$executeRaw(query);
+  return [];
+}
 
 /**
- * Many pages call "ensure schema" helpers during render.
- * On remote DBs (e.g. Neon), repeating `ALTER TABLE ... IF NOT EXISTS` on every request is very slow.
- * We memoize each ensure() so it runs once per server process.
- * If an ensure fails, clear the memo so a later request can retry (do not keep a rejected Promise forever).
+ * Schema is managed by Prisma (`npx prisma db push`). Runtime DDL is disabled.
+ * Data backfills (copyright codes, grade categories, homepage default row) keep their own logic.
  */
-const ensureOnceMap = new Map<string, Promise<void>>();
-function ensureOnce(key: string, fn: () => Promise<void>): Promise<void> {
-  const existing = ensureOnceMap.get(key);
-  if (existing) return existing;
-  const p = (async () => {
-    try {
-      await fn();
-    } catch (e) {
-      ensureOnceMap.delete(key);
-      throw e;
-    }
-  })();
-  ensureOnceMap.set(key, p);
-  return p;
+function ensureOnce(_key: string, _fn: () => Promise<void>): Promise<void> {
+  return Promise.resolve();
 }
 
 /** تحويل مفتاح snake_case إلى camelCase */
@@ -819,17 +824,9 @@ export async function deletePasswordChangeRequest(requestId: string): Promise<bo
 }
 
 // ----- Category -----
-let categoryCreatedByColumnEnsured = false;
-
-/** يضيف عمود created_by_id لجدول الأقسام (أقسام المنصة = NULL، قسم المدرس = معرّف المدرس) */
+/** Schema via Prisma (`db push`) — runtime DDL disabled */
 async function ensureCategoryCreatedByColumn(): Promise<void> {
-  if (categoryCreatedByColumnEnsured) return;
-  try {
-    await sql`ALTER TABLE "Category" ADD COLUMN IF NOT EXISTS created_by_id TEXT`;
-    categoryCreatedByColumnEnsured = true;
-  } catch {
-    /* DDL غير متاح */
-  }
+  return;
 }
 
 /** يضمن وجود أقسام المراحل الدراسية الثابتة (المراحل الدراسية) */
@@ -3007,43 +3004,9 @@ export async function updateHomepageSettings(data: {
 }
 
 // ----- اشتراكات المنصة الشاملة (كل الدورات المدفوعة أثناء الاشتراك النشط) -----
-let platformSubscriptionSchemaEnsured = false;
-
+/** Schema via Prisma (`db push`) — runtime DDL disabled */
 async function ensurePlatformSubscriptionSchema(): Promise<void> {
-  if (platformSubscriptionSchemaEnsured) return;
-  try {
-    await sql`
-      CREATE TABLE IF NOT EXISTS "SubscriptionPlan" (
-        id TEXT PRIMARY KEY,
-        name TEXT NOT NULL,
-        description TEXT NOT NULL DEFAULT '',
-        image_url TEXT,
-        duration_kind TEXT NOT NULL,
-        price DECIMAL(10, 2) NOT NULL DEFAULT 0,
-        is_active BOOLEAN NOT NULL DEFAULT true,
-        sort_order INT NOT NULL DEFAULT 0,
-        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        CONSTRAINT subscription_plan_duration_chk CHECK (duration_kind IN ('week', 'month', 'year'))
-      )
-    `;
-    await sql`ALTER TABLE "SubscriptionPlan" ADD COLUMN IF NOT EXISTS category_id TEXT`;
-    await sql`
-      CREATE TABLE IF NOT EXISTS "UserPlatformSubscription" (
-        id TEXT PRIMARY KEY,
-        user_id TEXT NOT NULL REFERENCES "User"(id) ON DELETE CASCADE,
-        plan_id TEXT REFERENCES "SubscriptionPlan"(id) ON DELETE SET NULL,
-        price_paid DECIMAL(10, 2) NOT NULL DEFAULT 0,
-        expires_at TIMESTAMPTZ NOT NULL,
-        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-      )
-    `;
-    await sql`CREATE INDEX IF NOT EXISTS "UserPlatformSubscription_user_expires_idx" ON "UserPlatformSubscription"(user_id, expires_at)`;
-    await sql`CREATE INDEX IF NOT EXISTS "SubscriptionPlan_active_sort_idx" ON "SubscriptionPlan"(is_active, sort_order)`;
-    platformSubscriptionSchemaEnsured = true;
-  } catch {
-    /* إنشاء الجداول قد يفشل بدون صلاحية CREATE */
-  }
+  return;
 }
 
 export async function getSubscriptionsFeatureEnabled(): Promise<boolean> {
@@ -3090,31 +3053,9 @@ export async function setStoreFeatureEnabled(enabled: boolean): Promise<void> {
   `;
 }
 
-let storeProductsSchemaEnsured = false;
-
+/** Schema via Prisma (`db push`) — runtime DDL disabled */
 async function ensureStoreProductsSchema(): Promise<void> {
-  if (storeProductsSchemaEnsured) return;
-  try {
-    await sql`
-      CREATE TABLE IF NOT EXISTS "StoreProduct" (
-        id TEXT PRIMARY KEY,
-        title TEXT NOT NULL,
-        description TEXT NOT NULL DEFAULT '',
-        price DECIMAL(10, 2) NOT NULL DEFAULT 0,
-        image_url TEXT,
-        pdf_url TEXT,
-        is_active BOOLEAN NOT NULL DEFAULT true,
-        sort_order INT NOT NULL DEFAULT 0,
-        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-      )
-    `;
-    await sql`CREATE INDEX IF NOT EXISTS "StoreProduct_active_sort_idx" ON "StoreProduct"(is_active, sort_order, created_at DESC)`;
-    await sql`ALTER TABLE "StoreProduct" ADD COLUMN IF NOT EXISTS cost_price DECIMAL(10, 2) NOT NULL DEFAULT 0`;
-    storeProductsSchemaEnsured = true;
-  } catch {
-    /* DDL غير متاح */
-  }
+  return;
 }
 
 export type StoreProductRow = {
@@ -3235,27 +3176,9 @@ export async function deleteStoreProduct(id: string): Promise<void> {
   await sql`DELETE FROM "StoreProduct" WHERE id = ${id.trim()}`;
 }
 
-let storePurchasesSchemaEnsured = false;
-
+/** Schema via Prisma (`db push`) — runtime DDL disabled */
 async function ensureStorePurchasesSchema(): Promise<void> {
-  if (storePurchasesSchemaEnsured) return;
-  try {
-    await ensureStoreProductsSchema();
-    await sql`
-      CREATE TABLE IF NOT EXISTS "UserStorePurchase" (
-        id TEXT PRIMARY KEY,
-        user_id TEXT NOT NULL REFERENCES "User"(id) ON DELETE CASCADE,
-        product_id TEXT NOT NULL REFERENCES "StoreProduct"(id) ON DELETE CASCADE,
-        price_paid DECIMAL(10, 2) NOT NULL DEFAULT 0,
-        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        UNIQUE(user_id, product_id)
-      )
-    `;
-    await sql`CREATE INDEX IF NOT EXISTS "UserStorePurchase_user_idx" ON "UserStorePurchase"(user_id, created_at DESC)`;
-    storePurchasesSchemaEnsured = true;
-  } catch {
-    /* DDL غير متاح */
-  }
+  return;
 }
 
 export type StudentStorePurchaseRow = {
@@ -6381,49 +6304,9 @@ export async function deleteActivationCodes(ids: string[]): Promise<void> {
 }
 
 // ----- HomeworkSubmission (استلام واجبات الطلاب — مرتبط بحصة أو بالكورس) -----
-let homeworkSubmissionSchemaEnsured = false;
-
-/** يطابق scripts/add-homework.sql و add-homework-lesson.sql — إنشاء تلقائي إن لم يُشغَّل السكربت يدوياً */
+/** Schema via Prisma (`db push`) — runtime DDL disabled */
 async function ensureHomeworkSubmissionSchema(): Promise<void> {
-  if (homeworkSubmissionSchemaEnsured) return;
-  const legacy = (await detectSchemaMode(sql)) === "legacy";
-  try {
-    await sql`ALTER TABLE "Course" ADD COLUMN IF NOT EXISTS accepts_homework BOOLEAN NOT NULL DEFAULT false`;
-    if (legacy) {
-      await sql`ALTER TABLE "Chapter" ADD COLUMN IF NOT EXISTS accepts_homework BOOLEAN NOT NULL DEFAULT false`;
-    } else {
-      await sql`ALTER TABLE "Lesson" ADD COLUMN IF NOT EXISTS accepts_homework BOOLEAN NOT NULL DEFAULT false`;
-    }
-    await sql`
-      CREATE TABLE IF NOT EXISTS "HomeworkSubmission" (
-        id            TEXT PRIMARY KEY,
-        course_id     TEXT NOT NULL REFERENCES "Course"(id) ON DELETE CASCADE,
-        user_id       TEXT NOT NULL REFERENCES "User"(id) ON DELETE CASCADE,
-        submission_type TEXT NOT NULL CHECK (submission_type IN ('link', 'pdf', 'image')),
-        link_url      TEXT,
-        file_url      TEXT,
-        file_name     TEXT,
-        created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
-      )
-    `;
-    await sql`CREATE INDEX IF NOT EXISTS "HomeworkSubmission_course_id_idx" ON "HomeworkSubmission"(course_id)`;
-    await sql`CREATE INDEX IF NOT EXISTS "HomeworkSubmission_user_id_idx" ON "HomeworkSubmission"(user_id)`;
-    await sql`CREATE INDEX IF NOT EXISTS "HomeworkSubmission_created_at_idx" ON "HomeworkSubmission"(created_at)`;
-    if (legacy) {
-      await sql`
-        ALTER TABLE "HomeworkSubmission" ADD COLUMN IF NOT EXISTS lesson_id TEXT REFERENCES "Chapter"(id) ON DELETE CASCADE
-      `;
-    } else {
-      await sql`
-        ALTER TABLE "HomeworkSubmission" ADD COLUMN IF NOT EXISTS lesson_id TEXT REFERENCES "Lesson"(id) ON DELETE CASCADE
-      `;
-    }
-    await sql`CREATE INDEX IF NOT EXISTS "HomeworkSubmission_lesson_id_idx" ON "HomeworkSubmission"(lesson_id)`;
-    await sql`ALTER TABLE "HomeworkSubmission" ADD COLUMN IF NOT EXISTS marked_at TIMESTAMPTZ`;
-    homeworkSubmissionSchemaEnsured = true;
-  } catch {
-    /* إنشاء الجدول أو الأعمدة قد يفشل بدون صلاحية */
-  }
+  return;
 }
 
 export async function createHomeworkSubmission(data: {
@@ -6634,11 +6517,6 @@ export async function getHomeworkSubmissionWithDetailsById(
   options?: { teacherId?: string | null },
 ): Promise<HomeworkSubmissionWithDetails | null> {
   await ensureHomeworkSubmissionSchema();
-  try {
-    await sql`ALTER TABLE "HomeworkSubmission" ADD COLUMN IF NOT EXISTS marked_at TIMESTAMPTZ`;
-  } catch {
-    /* */
-  }
   const teacherId = options?.teacherId?.trim() || null;
   if (teacherId) {
     await ensureCourseAssignedTeacherColumn();
@@ -6676,11 +6554,6 @@ export async function markHomeworkSubmissionAsMarked(
   options?: { teacherId?: string | null },
 ): Promise<HomeworkSubmissionWithDetails | null> {
   await ensureHomeworkSubmissionSchema();
-  try {
-    await sql`ALTER TABLE "HomeworkSubmission" ADD COLUMN IF NOT EXISTS marked_at TIMESTAMPTZ`;
-  } catch {
-    /* */
-  }
   const teacherId = options?.teacherId?.trim() || null;
   if (teacherId) {
     await ensureCourseAssignedTeacherColumn();
