@@ -1,13 +1,20 @@
-import { getCoursesPublishedCached } from "@/lib/public-data-cache";
-import { getTeacherIdsExcludedFromPublicCourseLists, getUserById, ensureGradeCategories } from "@/lib/db";
-import { courseIsHiddenFromPublicTeacherCatalog } from "@/lib/permissions";
+import { getServerSession } from "next-auth";
 import { redirect } from "next/navigation";
+import { authOptions } from "@/lib/auth";
+import { getCoursesPublishedCached } from "@/lib/public-data-cache";
+import {
+  getTeacherIdsExcludedFromPublicCourseLists,
+  getUserById,
+  ensureGradeCategories,
+  listActivePlatformSubscriptionsForUser,
+} from "@/lib/db";
+import { courseIsHiddenFromPublicTeacherCatalog } from "@/lib/permissions";
 import { TeacherCoursesSearch, type TeacherCourseListItem } from "./TeacherCoursesSearch";
 import { getLocaleFromCookie, getServerTranslator } from "@/lib/i18n/server";
 import { pickLocalizedText } from "@/lib/i18n/localized-field";
-import { getGradeStageBySlug } from "@/lib/grade-stages";
+import { filterCoursesCatalogForStudent, getGradeStageBySlug } from "@/lib/grade-stages";
 
-export const revalidate = 60;
+export const dynamic = "force-dynamic";
 
 export async function generateMetadata() {
   const t = await getServerTranslator();
@@ -20,7 +27,11 @@ export async function generateMetadata() {
 type Props = { searchParams: Promise<{ category?: string; teacher?: string }> };
 
 export default async function CoursesPage({ searchParams }: Props) {
-  const [t, locale] = await Promise.all([getServerTranslator(), getLocaleFromCookie()]);
+  const [t, locale, session] = await Promise.all([
+    getServerTranslator(),
+    getLocaleFromCookie(),
+    getServerSession(authOptions),
+  ]);
   const { category: categorySlug, teacher: teacherId } = await searchParams;
   try {
     await ensureGradeCategories();
@@ -70,6 +81,30 @@ export default async function CoursesPage({ searchParams }: Props) {
     filtered = filtered.filter(
       (c) => !courseIsHiddenFromPublicTeacherCatalog(c, hideTeacherCreators),
     );
+  }
+
+  if (session?.user?.role === "STUDENT" && session.user.id) {
+    const [student, subscriptions] = await Promise.all([
+      getUserById(session.user.id).catch(() => null),
+      listActivePlatformSubscriptionsForUser(session.user.id).catch(() => []),
+    ]);
+    filtered = filterCoursesCatalogForStudent(
+      filtered as Array<{
+        id: string;
+        categoryId?: string | null;
+        category_id?: string | null;
+        category?: {
+          id?: string | null;
+          slug?: string | null;
+          nameAr?: string | null;
+          name_ar?: string | null;
+        } | null;
+        level?: string | null;
+        grade?: string | null;
+      }>,
+      student?.grade,
+      subscriptions.map((s) => ({ categoryId: s.categoryId, courseIds: s.courseIds })),
+    ) as typeof filtered;
   }
 
   const categoryNameFromCourse =

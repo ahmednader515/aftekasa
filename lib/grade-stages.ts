@@ -119,3 +119,73 @@ export function filterCoursesByStudentGrade<
   if (!slug) return courses;
   return courses.filter((c) => courseCategorySlug(c) === slug);
 }
+
+type StudentCatalogSubscription = {
+  categoryId: string | null;
+  /** Empty = all paid courses in the plan category. */
+  courseIds: string[];
+};
+
+/**
+ * Student /courses catalog:
+ * 1) Always limit to the student's grade stage.
+ * 2) If an active plan lists specific courses → only those (still within grade).
+ * 3) If plans unlock "all in section" (empty courseIds) → grade-matched courses only
+ *    (optionally intersected with those plan categories when set).
+ */
+export function filterCoursesCatalogForStudent<
+  T extends {
+    id: string;
+    categoryId?: string | null;
+    category_id?: string | null;
+    category?: {
+      id?: string | null;
+      slug?: string | null;
+      nameAr?: string | null;
+      name_ar?: string | null;
+    } | null;
+    level?: string | null;
+    grade?: string | null;
+  },
+>(
+  courses: T[],
+  grade: string | null | undefined,
+  subscriptions: StudentCatalogSubscription[],
+): T[] {
+  const byGrade = filterCoursesByStudentGrade(courses, grade);
+  if (subscriptions.length === 0) return byGrade;
+
+  const anyAllInCategory = subscriptions.some((s) => s.courseIds.length === 0);
+  const specificIds = new Set(
+    subscriptions.flatMap((s) => s.courseIds.map((id) => String(id).trim()).filter(Boolean)),
+  );
+
+  if (!anyAllInCategory && specificIds.size > 0) {
+    return byGrade.filter((c) => specificIds.has(String(c.id)));
+  }
+
+  if (anyAllInCategory && specificIds.size > 0) {
+    const planCategoryIds = new Set(
+      subscriptions
+        .filter((s) => s.courseIds.length === 0)
+        .map((s) => s.categoryId)
+        .filter((id): id is string => !!id?.trim()),
+    );
+    return byGrade.filter((c) => {
+      if (specificIds.has(String(c.id))) return true;
+      if (planCategoryIds.size === 0) return true;
+      const catId = String(c.categoryId ?? c.category_id ?? c.category?.id ?? "").trim();
+      return !!catId && planCategoryIds.has(catId);
+    });
+  }
+
+  // Only "all in category" plans: keep grade list, restrict to plan categories when present.
+  const planCategoryIds = new Set(
+    subscriptions.map((s) => s.categoryId).filter((id): id is string => !!id?.trim()),
+  );
+  if (planCategoryIds.size === 0) return byGrade;
+  return byGrade.filter((c) => {
+    const catId = String(c.categoryId ?? c.category_id ?? c.category?.id ?? "").trim();
+    return !!catId && planCategoryIds.has(catId);
+  });
+}

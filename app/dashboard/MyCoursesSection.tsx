@@ -41,7 +41,7 @@ function toCourseCardCourse(c: CourseWithCategory): CourseCardCourse {
     duration: c.duration ?? undefined,
     level: c.level ?? undefined,
     imageUrl: imageUrl ?? undefined,
-    price: c.price,
+    price: c.price != null ? Number(c.price) : undefined,
     courseRating:
       raw.courseRating != null
         ? Number(raw.courseRating)

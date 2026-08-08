@@ -111,6 +111,13 @@ function snakeToCamel(s: string): string {
 }
 
 /** تحويل صف من قاعدة البيانات (snake_case) إلى شكل التطبيق (camelCase) */
+function serializeSqlValue(v: unknown): unknown {
+  if (v == null) return v;
+  // Prisma $queryRaw returns Decimal for numeric columns — not RSC-serializable
+  if (Prisma.Decimal.isDecimal(v)) return v.toNumber();
+  return v;
+}
+
 function rowToCamel<T = Record<string, unknown>>(row: Record<string, unknown> | null): T | null {
   if (!row) return null;
   const out: Record<string, unknown> = {};
@@ -118,7 +125,7 @@ function rowToCamel<T = Record<string, unknown>>(row: Record<string, unknown> | 
     const key = snakeToCamel(k);
     // Prefer snake_case when both is_published and isPublished exist on legacy DBs
     if (!(key in out) || k.includes("_")) {
-      out[key] = v;
+      out[key] = serializeSqlValue(v);
     }
   }
   return out as T;
