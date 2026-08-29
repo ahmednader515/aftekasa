@@ -4,6 +4,7 @@ import Link from "next/link";
 import { authOptions } from "@/lib/auth";
 import { getUserById } from "@/lib/db";
 import { ProfileForm } from "./ProfileForm";
+import { StudentProfileForm } from "./StudentProfileForm";
 import { TeacherPublicProfileForm } from "./TeacherPublicProfileForm";
 
 export default async function ProfilePage() {
@@ -16,6 +17,7 @@ export default async function ProfilePage() {
   const isAdmin = session.user.role === "ADMIN";
   const isStaff = isAdmin || session.user.role === "ASSISTANT_ADMIN";
   const isTeacher = session.user.role === "TEACHER";
+  const isStudent = session.user.role === "STUDENT";
 
   const teacherSubject =
     (user as { teacher_subject?: string | null }).teacher_subject?.trim() ?? "";
@@ -44,12 +46,23 @@ export default async function ProfilePage() {
           {user.student_number ? ` · هاتف: ${user.student_number}` : ""} (للتعديل تواصل مع الأدمن إن لزم)
         </p>
       )}
-      <ProfileForm
-        defaultName={user.name ?? ""}
-        defaultEmail={isStaff ? (user.email ?? "") : undefined}
-        defaultRole={isStaff ? (user.role ?? "STUDENT") : undefined}
-        canChangeRole={isAdmin}
-      />
+      {isStudent ? (
+        <StudentProfileForm
+          defaultName={user.name ?? ""}
+          defaultGrade={user.grade ?? ""}
+          defaultDivision={user.division ?? ""}
+          defaultStudyType={user.studyType ?? user.study_type ?? ""}
+          defaultGovernorate={user.governorate ?? ""}
+          defaultGuardianNumber={user.guardian_number ?? ""}
+        />
+      ) : (
+        <ProfileForm
+          defaultName={user.name ?? ""}
+          defaultEmail={isStaff ? (user.email ?? "") : undefined}
+          defaultRole={isStaff ? (user.role ?? "STUDENT") : undefined}
+          canChangeRole={isAdmin}
+        />
+      )}
       {isTeacher ? (
         <TeacherPublicProfileForm defaultSubject={teacherSubject} defaultAvatarUrl={teacherAvatar} />
       ) : null}

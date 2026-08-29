@@ -6609,6 +6609,25 @@ export async function deleteHomeworkSubmissionsByIds(ids: string[]): Promise<num
   return validIds.length;
 }
 
+export async function deleteHomeworkSubmissionsByIdsForUser(
+  userId: string,
+  ids: string[],
+): Promise<number> {
+  await ensureHomeworkSubmissionSchema();
+  const validIds = ids.filter((id) => id && String(id).trim());
+  if (validIds.length === 0) return 0;
+  let count = 0;
+  for (const id of validIds) {
+    const rows = await sql`
+      DELETE FROM "HomeworkSubmission"
+      WHERE id = ${id} AND user_id = ${userId}
+      RETURNING id
+    `;
+    if (rows.length > 0) count++;
+  }
+  return count;
+}
+
 export async function deleteAllHomeworkSubmissions(): Promise<void> {
   await ensureHomeworkSubmissionSchema();
   await sql`DELETE FROM "HomeworkSubmission"`;

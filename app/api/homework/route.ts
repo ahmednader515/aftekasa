@@ -8,6 +8,7 @@ import {
   getHomeworkSubmissionsByLessonAndUser,
   deleteHomeworkSubmissionsByIds,
   deleteHomeworkSubmissionsByIdsForTeacher,
+  deleteHomeworkSubmissionsByIdsForUser,
   deleteAllHomeworkSubmissions,
 } from "@/lib/db";
 
@@ -55,10 +56,10 @@ export async function GET(request: NextRequest) {
   }
 }
 
-/** حذف تسليمات واجبات — أدمن/مساعد: حذف المحدد (ids) أو حذف الكل (deleteAll) */
+/** حذف تسليمات واجبات — أدمن/مساعد/مدرس: حذف المحدد؛ طالب: حذف تسليماته فقط */
 export async function DELETE(request: NextRequest) {
   const session = await getServerSession(authOptions);
-  if (!session?.user?.id || (session.user.role !== "ADMIN" && session.user.role !== "ASSISTANT_ADMIN" && session.user.role !== "TEACHER")) {
+  if (!session?.user?.id) {
     return NextResponse.json({ error: "غير مصرح" }, { status: 403 });
   }
   let body: { ids?: string[]; deleteAll?: boolean };
@@ -68,7 +69,7 @@ export async function DELETE(request: NextRequest) {
     return NextResponse.json({ error: "طلب غير صالح" }, { status: 400 });
   }
   if (body.deleteAll === true) {
-    if (session.user.role === "TEACHER") {
+    if (session.user.role !== "ADMIN" && session.user.role !== "ASSISTANT_ADMIN") {
       return NextResponse.json({ error: "غير مصرح" }, { status: 403 });
     }
     await deleteAllHomeworkSubmissions();
@@ -77,6 +78,13 @@ export async function DELETE(request: NextRequest) {
   let ids = Array.isArray(body.ids) ? body.ids.filter((id) => typeof id === "string" && id.trim()) : [];
   if (ids.length === 0) {
     return NextResponse.json({ error: "حدّد تسليمات للحذف أو استخدم حذف الكل" }, { status: 400 });
+  }
+  if (session.user.role === "STUDENT") {
+    const count = await deleteHomeworkSubmissionsByIdsForUser(session.user.id, ids);
+    return NextResponse.json({ success: true, deleted: count });
+  }
+  if (session.user.role !== "ADMIN" && session.user.role !== "ASSISTANT_ADMIN" && session.user.role !== "TEACHER") {
+    return NextResponse.json({ error: "غير مصرح" }, { status: 403 });
   }
   const count =
     session.user.role === "TEACHER"

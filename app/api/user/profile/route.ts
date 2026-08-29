@@ -4,6 +4,16 @@ import { hash } from "bcryptjs";
 import { z } from "zod";
 import { authOptions } from "@/lib/auth";
 import { getUserByEmailExcludingId, updateUser, clearCurrentSessionId } from "@/lib/db";
+import {
+  EGYPT_GOVERNORATES,
+  SIGNUP_GRADES,
+  SIGNUP_STUDY_TYPES,
+  gradeHasDivisions,
+  isValidDivisionForGrade,
+  isValidGovernorate,
+  isValidSignupGrade,
+  isValidSignupStudyType,
+} from "@/lib/signup-options";
 
 const ROLES = ["ADMIN", "ASSISTANT_ADMIN", "STUDENT", "TEACHER"] as const;
 
@@ -14,6 +24,11 @@ const updateSchema = z.object({
   role: z.enum(ROLES).optional(),
   teacherSubject: z.string().max(500).optional().nullable(),
   teacherAvatarUrl: z.string().max(2000).optional().nullable(),
+  grade: z.enum(SIGNUP_GRADES).optional(),
+  division: z.string().optional(),
+  studyType: z.enum(SIGNUP_STUDY_TYPES).optional(),
+  governorate: z.enum(EGYPT_GOVERNORATES).optional(),
+  guardianNumber: z.string().optional(),
 });
 
 export async function PATCH(request: NextRequest) {
@@ -37,6 +52,16 @@ export async function PATCH(request: NextRequest) {
     );
   }
 
+  const isStudent = session.user.role === "STUDENT";
+
+  if (isStudent && parsed.data.name !== undefined) {
+    return NextResponse.json({ error: "لا يمكنك تغيير الاسم" }, { status: 403 });
+  }
+
+  if (isStudent && parsed.data.guardianNumber !== undefined) {
+    return NextResponse.json({ error: "لا يمكنك تغيير رقم ولي الأمر" }, { status: 403 });
+  }
+
   const data: {
     name?: string;
     email?: string;
@@ -44,9 +69,14 @@ export async function PATCH(request: NextRequest) {
     password_hash?: string;
     teacher_subject?: string | null;
     teacher_avatar_url?: string | null;
+    grade?: string | null;
+    division?: string | null;
+    study_type?: string | null;
+    governorate?: string | null;
+    guardian_number?: string | null;
   } = {};
 
-  if (parsed.data.name !== undefined) data.name = parsed.data.name.trim();
+  if (!isStudent && parsed.data.name !== undefined) data.name = parsed.data.name.trim();
 
   if (parsed.data.email !== undefined) {
     const email = parsed.data.email.trim();
@@ -74,6 +104,37 @@ export async function PATCH(request: NextRequest) {
   if (parsed.data.teacherAvatarUrl !== undefined && session.user.role === "TEACHER") {
     const u = parsed.data.teacherAvatarUrl?.trim();
     data.teacher_avatar_url = u === "" ? null : u ?? null;
+  }
+
+  if (isStudent) {
+    if (parsed.data.grade !== undefined) {
+      const grade = parsed.data.grade;
+      if (!isValidSignupGrade(grade)) {
+        return NextResponse.json({ error: "الصف الدراسي غير صالح" }, { status: 400 });
+      }
+      data.grade = grade;
+      const division = (parsed.data.division ?? "").trim();
+      if (gradeHasDivisions(grade)) {
+        if (!isValidDivisionForGrade(grade, division)) {
+          return NextResponse.json({ error: "القسم غير صالح للصف المختار" }, { status: 400 });
+        }
+        data.division = division;
+      } else {
+        data.division = null;
+      }
+    }
+    if (parsed.data.studyType !== undefined) {
+      if (!isValidSignupStudyType(parsed.data.studyType)) {
+        return NextResponse.json({ error: "نوع الدراسة غير صالح" }, { status: 400 });
+      }
+      data.study_type = parsed.data.studyType;
+    }
+    if (parsed.data.governorate !== undefined) {
+      if (!isValidGovernorate(parsed.data.governorate)) {
+        return NextResponse.json({ error: "المحافظة غير صالحة" }, { status: 400 });
+      }
+      data.governorate = parsed.data.governorate;
+    }
   }
 
   if (Object.keys(data).length === 0) {
