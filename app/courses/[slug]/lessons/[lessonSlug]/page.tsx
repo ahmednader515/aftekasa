@@ -226,7 +226,7 @@ export default async function LessonPage({ params }: Props) {
       : !homeworkRequired;
   const lessonCompleted =
     session?.user?.id && isStudent
-      ? (progressionRow?.completed ?? (videoComplete && homeworkSubmitted))
+      ? (progressionRow?.completed ?? (!homeworkRequired || homeworkSubmitted))
       : false;
   const canAutoComplete = isStudent && hasFullStudentAccess && !videoComplete;
   const nextHref = nextItem

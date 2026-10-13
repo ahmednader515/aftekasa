@@ -8,7 +8,6 @@ import {
 import { QUIZ_PASS_PERCENT } from "./course-content";
 import { progressionRowToNavLink, type ProgressionNavLink } from "./course-progression-nav";
 import {
-  getCompletedLessonIdsForCourse,
   getLessonIdsWithHomeworkSubmittedForCourse,
   getQuizProgressSets,
 } from "./db";
@@ -29,16 +28,14 @@ function lessonRequiresHomework(lesson: Record<string, unknown> | undefined): bo
   return Boolean(lesson.acceptsHomework ?? lesson.accepts_homework);
 }
 
-/** Video progress only counts as complete when homework is also submitted (if required). */
+/** Only homework submission gates lesson progression; video progress is informational. */
 export function filterCompletedLessonsForHomework(
-  watchedLessonIds: Set<string>,
   homeworkLessonIds: Set<string>,
   lessons: Record<string, unknown>[],
 ): Set<string> {
-  const byId = new Map(lessons.map((l) => [String(l.id), l]));
   const completed = new Set<string>();
-  for (const id of watchedLessonIds) {
-    const lesson = byId.get(id);
+  for (const lesson of lessons) {
+    const id = String(lesson.id);
     if (lessonRequiresHomework(lesson) && !homeworkLessonIds.has(id)) continue;
     completed.add(id);
   }
@@ -67,14 +64,12 @@ export async function resolveCourseProgression(
   }
 
   const quizIds = quizzes.map((q) => String(q.id));
-  const [watchedLessonIds, quizProgress, homeworkLessonIds] = await Promise.all([
-    getCompletedLessonIdsForCourse(userId, courseId),
+  const [quizProgress, homeworkLessonIds] = await Promise.all([
     getQuizProgressSets(userId, quizIds, QUIZ_PASS_PERCENT),
     getLessonIdsWithHomeworkSubmittedForCourse(userId, courseId),
   ]);
 
   const completedLessonIds = filterCompletedLessonsForHomework(
-    watchedLessonIds,
     homeworkLessonIds,
     lessons,
   );

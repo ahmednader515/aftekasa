@@ -71,8 +71,7 @@ export function LessonWatchShell({
     setHomeworkSubmitted(initialHomeworkSubmitted);
   }, [initialHomeworkSubmitted]);
 
-  const progressionComplete =
-    videoComplete && (!homeworkRequired || homeworkSubmitted);
+  const progressionComplete = !homeworkRequired || homeworkSubmitted;
 
   const markComplete = useCallback(async () => {
     if (videoComplete || loading) return;
@@ -123,7 +122,7 @@ export function LessonWatchShell({
         ✓ {t("courses.lessonCompleted", "Lesson completed")}
       </p>
     );
-  } else if (videoComplete && homeworkRequired && !homeworkSubmitted) {
+  } else if (homeworkRequired && !homeworkSubmitted) {
     progressAction = (
       <p
         role="status"
@@ -134,31 +133,6 @@ export function LessonWatchShell({
           "Submit the homework to unlock the next lesson.",
         )}
       </p>
-    );
-  } else if (!videoComplete && homeworkRequired && homeworkSubmitted) {
-    progressAction = (
-      <p
-        role="status"
-        className="mt-6 rounded-[var(--radius-btn)] border border-[var(--color-primary)]/40 bg-[var(--color-primary)]/15 px-4 py-3 text-sm font-semibold text-[var(--color-primary)]"
-      >
-        {t(
-          "courses.watchVideoToProgress",
-          "Watch the full video to unlock the next lesson.",
-        )}
-      </p>
-    );
-  } else if (!youtubeVideoId && canAutoComplete) {
-    progressAction = (
-      <button
-        type="button"
-        onClick={() => void markComplete()}
-        disabled={loading}
-        className="mt-6 inline-flex items-center gap-2 rounded-[var(--radius-btn)] bg-[var(--color-primary)] px-4 py-2 text-sm font-medium text-white transition hover:bg-[var(--color-primary-hover)] disabled:opacity-60"
-      >
-        {loading
-          ? t("courses.completingLesson", "Saving...")
-          : t("courses.markLessonComplete", "Mark lesson as complete")}
-      </button>
     );
   }
 
