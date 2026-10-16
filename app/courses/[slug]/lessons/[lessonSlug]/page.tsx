@@ -224,10 +224,6 @@ export default async function LessonPage({ params }: Props) {
     session?.user?.id && isStudent && homeworkRequired
       ? await hasHomeworkSubmissionForLesson(session.user.id, lessonId)
       : !homeworkRequired;
-  const lessonCompleted =
-    session?.user?.id && isStudent
-      ? (progressionRow?.completed ?? (!homeworkRequired || homeworkSubmitted))
-      : false;
   const canAutoComplete = isStudent && hasFullStudentAccess && !videoComplete;
   const nextHref = nextItem
     ? nextItem.type === "lesson"
@@ -265,7 +261,6 @@ export default async function LessonPage({ params }: Props) {
             courseId={course.id}
             canAutoComplete={canAutoComplete}
             initialVideoComplete={videoComplete}
-            homeworkRequired={homeworkRequired && isStudent && hasFullStudentAccess}
             initialHomeworkSubmitted={homeworkSubmitted}
             nextHref={isStudent && hasFullStudentAccess ? nextHref : null}
             nextLabel={isStudent && hasFullStudentAccess ? nextLabel : null}
@@ -343,7 +338,7 @@ export default async function LessonPage({ params }: Props) {
             ) : (
               <span />
             )}
-            {(lessonCompleted || !isStudent) && nextItem && !nextItem.locked ? (
+            {nextItem && !nextItem.locked ? (
               <Link
                 href={nextItem.type === "lesson" ? lessonHref(course, { id: nextItem.id, slug: nextItem.slug ?? undefined }) : quizHref(course, nextItem.id)}
                 className="rounded-[var(--radius-btn)] bg-[var(--color-primary)] px-4 py-3 text-sm font-medium text-white transition hover:bg-[var(--color-primary-hover)]"

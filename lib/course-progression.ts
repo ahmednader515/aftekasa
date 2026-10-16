@@ -1,6 +1,5 @@
 import {
   mergeCourseContentItems,
-  normalizeQuizTypeValue,
   findRemedialForParent,
   remedialChildIdsInCourse,
 } from "./course-content";
@@ -48,7 +47,6 @@ export function buildCourseProgressionState(input: BuildProgressionInput): Cours
     completedLessonIds,
     submittedQuizIds,
     passedQuizIds,
-    sequentialLockEnabled,
   } = input;
   const childRemedialIds = remedialChildIdsInCourse(quizzes);
   const quizzesForMerge = quizzes.filter((q) => !childRemedialIds.has(String(q.id)));
@@ -110,25 +108,8 @@ export function buildCourseProgressionState(input: BuildProgressionInput): Cours
     };
   });
 
-  if (sequentialLockEnabled && rows.length > 0) {
-    let chainUnlocked = true;
-    for (let i = 0; i < rows.length; i++) {
-      const row = rows[i];
-      if (i === 0) {
-        row.locked = false;
-      } else {
-        row.locked = !chainUnlocked;
-      }
-      if (row.locked) chainUnlocked = false;
-      else if (!row.completed) chainUnlocked = false;
-    }
-  }
-
-  let maxUnlockedIndex = rows.length - 1;
-  if (sequentialLockEnabled) {
-    maxUnlockedIndex = rows.findIndex((r) => r.locked);
-    if (maxUnlockedIndex === -1) maxUnlockedIndex = rows.length - 1;
-  }
+  // Course content is accessible regardless of previous progress.
+  const maxUnlockedIndex = rows.length - 1;
 
   return { rows, maxUnlockedIndex };
 }

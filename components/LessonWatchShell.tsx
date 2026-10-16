@@ -34,7 +34,6 @@ type Props = {
   /** Student with full access who has not watched/marked the video yet. */
   canAutoComplete: boolean;
   initialVideoComplete: boolean;
-  homeworkRequired: boolean;
   initialHomeworkSubmitted: boolean;
   nextHref: string | null;
   nextLabel: string | null;
@@ -50,7 +49,6 @@ export function LessonWatchShell({
   courseId,
   canAutoComplete,
   initialVideoComplete,
-  homeworkRequired,
   initialHomeworkSubmitted,
   nextHref,
   nextLabel,
@@ -70,8 +68,6 @@ export function LessonWatchShell({
   useEffect(() => {
     setHomeworkSubmitted(initialHomeworkSubmitted);
   }, [initialHomeworkSubmitted]);
-
-  const progressionComplete = !homeworkRequired || homeworkSubmitted;
 
   const markComplete = useCallback(async () => {
     if (videoComplete || loading) return;
@@ -107,7 +103,7 @@ export function LessonWatchShell({
   );
 
   let progressAction: ReactNode = null;
-  if (progressionComplete && nextHref && nextLabel) {
+  if (nextHref && nextLabel) {
     progressAction = (
       <Link
         href={nextHref}
@@ -116,22 +112,10 @@ export function LessonWatchShell({
         {nextLabel} →
       </Link>
     );
-  } else if (progressionComplete) {
+  } else if (videoComplete) {
     progressAction = (
       <p className="mt-6 text-sm font-medium text-[var(--color-success)]">
         ✓ {t("courses.lessonCompleted", "Lesson completed")}
-      </p>
-    );
-  } else if (homeworkRequired && !homeworkSubmitted) {
-    progressAction = (
-      <p
-        role="status"
-        className="mt-6 rounded-[var(--radius-btn)] border border-[var(--color-primary)]/40 bg-[var(--color-primary)]/15 px-4 py-3 text-sm font-semibold text-[var(--color-primary)]"
-      >
-        {t(
-          "courses.homeworkRequiredToProgress",
-          "Submit the homework to unlock the next lesson.",
-        )}
       </p>
     );
   }
