@@ -10,7 +10,7 @@ import {
   getQuizAttemptsForTeacher,
   getTotalEarningsForTeacher,
   getCoursesWithCountsForCreator,
-  getCompletedLessonCountsForUsers,
+  getStudentLearningActivityForUsers,
 } from "@/lib/db";
 import { getServerTranslator } from "@/lib/i18n/server";
 import StatisticsContent from "./StatisticsContent";
@@ -42,7 +42,7 @@ export default async function StatisticsPage() {
       }),
     );
 
-    const completedLessonCounts = await getCompletedLessonCountsForUsers(
+    const activityByUser = await getStudentLearningActivityForUsers(
       students.map((s) => s.id),
       myCourseIdList,
     );
@@ -65,8 +65,11 @@ export default async function StatisticsPage() {
       const enrollments = enrollmentsByUser[i] ?? [];
       const userAttempts = attempts.filter((a) => a.userId === s.id);
       return {
-        student: { id: s.id, name: s.name, email: s.email },
-        completedLessonsCount: completedLessonCounts.get(s.id) ?? 0,
+        student: { id: s.id, name: s.name, email: s.email, studentNumber: s.student_number ?? null, guardianNumber: s.guardian_number ?? null },
+        completedLessonsCount: activityByUser.get(s.id)?.completedLessonsCount ?? 0,
+        homeworkCount: activityByUser.get(s.id)?.homeworkCount ?? 0,
+        markedHomeworkCount: activityByUser.get(s.id)?.markedHomeworkCount ?? 0,
+        lastLearningActivityAt: activityByUser.get(s.id)?.lastActivityAt ?? null,
         enrollments: enrollments.map((e) => ({
           course: { title: e.course.title, titleAr: e.course.titleAr ?? null },
         })),
@@ -107,7 +110,7 @@ export default async function StatisticsPage() {
     students.map((s) => getEnrollmentsWithCourseByUserId(s.id))
   );
 
-  const completedLessonCounts = await getCompletedLessonCountsForUsers(students.map((s) => s.id));
+  const activityByUser = await getStudentLearningActivityForUsers(students.map((s) => s.id));
 
   const totalEnrollments = enrollmentsByUser.reduce((sum, e) => sum + e.length, 0);
 
@@ -127,8 +130,11 @@ export default async function StatisticsPage() {
     const enrollments = enrollmentsByUser[i] ?? [];
     const userAttempts = attempts.filter((a) => a.userId === s.id);
     return {
-      student: { id: s.id, name: s.name, email: s.email },
-      completedLessonsCount: completedLessonCounts.get(s.id) ?? 0,
+      student: { id: s.id, name: s.name, email: s.email, studentNumber: s.student_number ?? null, guardianNumber: s.guardian_number ?? null },
+      completedLessonsCount: activityByUser.get(s.id)?.completedLessonsCount ?? 0,
+      homeworkCount: activityByUser.get(s.id)?.homeworkCount ?? 0,
+      markedHomeworkCount: activityByUser.get(s.id)?.markedHomeworkCount ?? 0,
+      lastLearningActivityAt: activityByUser.get(s.id)?.lastActivityAt ?? null,
       enrollments: enrollments.map((e) => ({
         course: { title: e.course.title, titleAr: e.course.titleAr ?? null },
       })),

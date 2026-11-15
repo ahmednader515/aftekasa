@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
+import { isGradeStageSlug, signupGradeToStageSlug } from "@/lib/grade-stages";
 import {
   createMessage,
   getOrCreateConversation,
@@ -12,7 +13,7 @@ export const maxDuration = 60;
 
 const BATCH_SIZE = 10;
 
-/** إرسال رسالة جماعية لكل طلاب غرف الدردشة */
+/** إرسال رسالة جماعية لطلاب الصف المحدد ضمن الطلاب المسموح بمراسلتهم */
 export async function POST(request: NextRequest) {
   const session = await getServerSession(authOptions);
   if (!session?.user?.id) {
@@ -24,22 +25,30 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "غير مصرح" }, { status: 403 });
   }
 
-  let body: { content?: string };
+  let body: { content?: unknown; gradeStage?: unknown } | null;
   try {
     body = await request.json();
   } catch {
     return NextResponse.json({ error: "طلب غير صالح" }, { status: 400 });
   }
 
-  const content = body.content?.trim();
+  const gradeStage = body?.gradeStage;
+  if (typeof gradeStage !== "string" || !isGradeStageSlug(gradeStage)) {
+    return NextResponse.json({ error: "اختر الصف الدراسي" }, { status: 400 });
+  }
+
+  const content = typeof body?.content === "string" ? body.content.trim() : "";
   if (!content) {
     return NextResponse.json({ error: "محتوى النص مطلوب" }, { status: 400 });
   }
 
-  const students =
+  const eligibleStudents =
     role === "TEACHER"
       ? await getStudentsEnrolledInTeacherCourses(session.user.id)
       : await getUsersByRole("STUDENT");
+  const students = eligibleStudents.filter(
+    (student) => signupGradeToStageSlug(student.grade) === gradeStage.trim()
+  );
 
   if (students.length === 0) {
     return NextResponse.json({ sent: 0, failed: 0, total: 0 });

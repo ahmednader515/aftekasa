@@ -18,5 +18,5 @@ export async function GET() {
     role === "TEACHER"
       ? await getStudentsEnrolledInTeacherCourses(session.user.id)
       : await getUsersByRole("STUDENT");
-  return NextResponse.json(students.map((u) => ({ id: u.id, name: u.name, email: u.email })));
+  return NextResponse.json(students.map((u) => ({ id: u.id, name: u.name, email: u.email, grade: u.grade })));
 }

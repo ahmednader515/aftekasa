@@ -4,6 +4,7 @@ import { useState, useEffect, useRef } from "react";
 import { useLocale, useT } from "@/components/LocaleProvider";
 import { dateLocaleForUi } from "@/lib/i18n/dashboard-table";
 import { fillMessage } from "@/lib/i18n/interpolate";
+import { GRADE_STAGES, signupGradeToStageSlug } from "@/lib/grade-stages";
 
 type ConversationItem = {
   id: string;
@@ -28,7 +29,7 @@ type MessageItem = {
   createdAt: string;
 };
 
-type StudentItem = { id: string; name: string; email: string };
+type StudentItem = { id: string; name: string; email: string; grade?: string | null };
 
 type UnreadItem = {
   conversationId: string;
@@ -76,11 +77,15 @@ export function MessagesView({
   const [unreadByConversationId, setUnreadByConversationId] = useState<Record<string, number>>({});
   const [bulkOpen, setBulkOpen] = useState(false);
   const [bulkText, setBulkText] = useState("");
+  const [bulkGradeStage, setBulkGradeStage] = useState("");
   const [bulkSending, setBulkSending] = useState(false);
   const [bulkError, setBulkError] = useState<string | null>(null);
   const [bulkResult, setBulkResult] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesScrollRef = useRef<HTMLDivElement>(null);
+  const bulkRecipientCount = bulkGradeStage
+    ? students.filter((student) => signupGradeToStageSlug(student.grade) === bulkGradeStage).length
+    : 0;
 
   const filteredStudents = !studentSearch.trim()
     ? students
@@ -302,6 +307,7 @@ export function MessagesView({
 
   function openBulkModal() {
     setBulkOpen(true);
+    setBulkGradeStage("");
     setBulkText("");
     setBulkError(null);
     setBulkResult(null);
@@ -316,12 +322,16 @@ export function MessagesView({
   }
 
   async function sendBulkMessage() {
+    if (!bulkGradeStage) {
+      setBulkError(t(`${V}.bulkGradePlaceholder`));
+      return;
+    }
     const trimmed = bulkText.trim();
     if (!trimmed) {
       setBulkError(t(`${V}.bulkEmptyError`));
       return;
     }
-    if (students.length === 0) {
+    if (bulkRecipientCount === 0) {
       setBulkError(t(`${V}.bulkNoStudents`));
       return;
     }
@@ -334,7 +344,7 @@ export function MessagesView({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
-        body: JSON.stringify({ content: trimmed }),
+        body: JSON.stringify({ content: trimmed, gradeStage: bulkGradeStage }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
@@ -638,6 +648,29 @@ export function MessagesView({
               {t(`${V}.bulkModalTitle`)}
             </h3>
             <p className="mt-2 text-sm text-[var(--color-muted)]">{t(`${V}.bulkModalHelp`)}</p>
+            <div className="mt-4">
+              <label htmlFor="bulk-grade-stage" className="block text-sm font-medium text-[var(--color-foreground)]">
+                {t(`${V}.bulkGradeLabel`)}
+              </label>
+              <select
+                id="bulk-grade-stage"
+                value={bulkGradeStage}
+                onChange={(e) => {
+                  setBulkGradeStage(e.target.value);
+                  setBulkError(null);
+                  setBulkResult(null);
+                }}
+                disabled={bulkSending}
+                className="mt-1 w-full rounded-[var(--radius-btn)] border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2 text-sm disabled:opacity-60"
+              >
+                <option value="">{t(`${V}.bulkGradePlaceholder`)}</option>
+                {GRADE_STAGES.map((stage) => (
+                  <option key={stage.slug} value={stage.slug}>
+                    {locale === "ar" ? stage.nameAr : t(`${V}.bulkGrades.${stage.slug}`)}
+                  </option>
+                ))}
+              </select>
+            </div>
             {bulkError ? (
               <p className="mt-3 text-sm text-red-600 dark:text-red-400">{bulkError}</p>
             ) : null}
@@ -657,9 +690,11 @@ export function MessagesView({
                 className="mt-1 w-full rounded-[var(--radius-btn)] border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2 text-sm disabled:opacity-60"
               />
               <p className="mt-1 text-xs text-[var(--color-muted)]">
-                {students.length > 0
-                  ? fillMessage(t(`${V}.bulkRecipientCount`), { count: students.length })
-                  : t(`${V}.bulkNoStudents`)}
+                {!bulkGradeStage
+                  ? t(`${V}.bulkGradePlaceholder`)
+                  : bulkRecipientCount > 0
+                    ? fillMessage(t(`${V}.bulkRecipientCount`), { count: bulkRecipientCount })
+                    : t(`${V}.bulkNoStudents`)}
               </p>
             </div>
             <div className="mt-5 flex flex-wrap justify-end gap-2">
@@ -674,7 +709,7 @@ export function MessagesView({
               <button
                 type="button"
                 onClick={() => void sendBulkMessage()}
-                disabled={bulkSending || !bulkText.trim() || students.length === 0}
+                disabled={bulkSending || !bulkText.trim() || !bulkGradeStage || bulkRecipientCount === 0}
                 className="rounded-[var(--radius-btn)] bg-[var(--color-primary)] px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
               >
                 {bulkSending ? t(`${V}.bulkSending`) : t(`${V}.bulkConfirm`)}

@@ -3705,7 +3705,7 @@ function subscriptionCategoryMatches(
 }
 
 function subscriptionUnlocksCourse(
-  sub: ActivePlatformSubscription,
+  sub: Pick<ActivePlatformSubscription, "categoryId" | "courseIds">,
   courseId: string,
   courseCategoryId: string | null,
 ): boolean {
@@ -3754,6 +3754,48 @@ export async function userHasActivePlatformSubscriptionForPaidCourse(userId: str
   if (excluded === true || excluded === "true" || excluded === 1) return false;
   const courseCategoryId = courseCategoryIdFromRow(courseRow);
   return subs.some((sub) => subscriptionUnlocksCourse(sub, courseId, courseCategoryId));
+}
+
+/** Unique students with current subscription access, using the same rules as course access. */
+export async function getSubscriptionStudentCountsForCourses(
+  courses: Record<string, unknown>[],
+): Promise<Map<string, number>> {
+  const counts = new Map<string, number>();
+  if (courses.length === 0) return counts;
+  await ensurePlatformSubscriptionSchema();
+  const rows = await sql`
+    SELECT ups.user_id, ups.plan_id, sp.category_id
+    FROM "UserPlatformSubscription" ups
+    JOIN "User" u ON u.id = ups.user_id
+    LEFT JOIN "SubscriptionPlan" sp ON sp.id = ups.plan_id
+    WHERE ups.expires_at > NOW() AND u.role IN ('STUDENT', 'USER')
+  `;
+  const subscriptions = rows as Record<string, unknown>[];
+  const courseMap = await listCourseIdsByPlanIds(
+    [...new Set(subscriptions.map((row) => String(row.plan_id ?? "")).filter(Boolean))],
+  );
+  for (const course of courses) {
+    const id = String(course.id);
+    const published = course.isPublished ?? course.is_published;
+    const excluded = course.excludeFromSubscription ?? course.exclude_from_subscription;
+    if (!published || Number(course.price ?? 0) <= 0 || excluded === true || excluded === "true" || excluded === 1) {
+      counts.set(id, 0);
+      continue;
+    }
+    const studentIds = new Set<string>();
+    const categoryId = courseCategoryIdFromRow(course);
+    for (const row of subscriptions) {
+      const planId = String(row.plan_id ?? "");
+      if (subscriptionUnlocksCourse({
+        categoryId: row.category_id != null && String(row.category_id).trim() ? String(row.category_id) : null,
+        courseIds: courseMap.get(planId) ?? [],
+      }, id, categoryId)) {
+        studentIds.add(String(row.user_id));
+      }
+    }
+    counts.set(id, studentIds.size);
+  }
+  return counts;
 }
 
 /** تسجيل في الدورة أو اشتراك منصة نشط على دورة مدفوعة منشورة */
@@ -4895,6 +4937,53 @@ export async function getCompletedLessonCountsForUsers(
     }
   }
   return map;
+}
+
+export type StudentLearningActivity = {
+  homeworkCount: number;
+  markedHomeworkCount: number;
+  completedLessonsCount: number;
+  lastActivityAt: string | null;
+};
+
+/** Bulk activity totals; an explicitly empty course scope returns no activity. */
+export async function getStudentLearningActivityForUsers(
+  userIds: string[],
+  courseIds?: string[],
+): Promise<Map<string, StudentLearningActivity>> {
+  const result = new Map<string, StudentLearningActivity>();
+  const users = [...new Set(userIds.map((id) => id.trim()).filter(Boolean))];
+  const courses = courseIds?.map((id) => id.trim()).filter(Boolean);
+  if (!users.length || (courses && !courses.length)) return result;
+  await ensureHomeworkSubmissionSchema();
+  await ensureLessonProgressSchema();
+  const scope = courses ? Prisma.sql`AND course_id IN (${Prisma.join(courses)})` : Prisma.empty;
+  const rows = await sql`
+    WITH activity AS (
+      SELECT user_id, 'homework' AS kind, created_at AS activity_at, marked_at IS NOT NULL AS marked
+      FROM "HomeworkSubmission"
+      WHERE user_id IN (${Prisma.join(users)}) ${scope}
+      UNION ALL
+      SELECT user_id, 'lesson' AS kind, completed_at AS activity_at, false AS marked
+      FROM "LessonProgress"
+      WHERE user_id IN (${Prisma.join(users)}) ${scope}
+    )
+    SELECT user_id,
+      COUNT(*) FILTER (WHERE kind = 'homework')::int AS homework_count,
+      COUNT(*) FILTER (WHERE kind = 'homework' AND marked)::int AS marked_homework_count,
+      COUNT(*) FILTER (WHERE kind = 'lesson')::int AS completed_lessons_count,
+      MAX(activity_at) AS last_activity_at
+    FROM activity GROUP BY user_id
+  `;
+  for (const row of rows as Record<string, unknown>[]) {
+    result.set(String(row.user_id), {
+      homeworkCount: Number(row.homework_count ?? 0),
+      markedHomeworkCount: Number(row.marked_homework_count ?? 0),
+      completedLessonsCount: Number(row.completed_lessons_count ?? 0),
+      lastActivityAt: row.last_activity_at ? new Date(row.last_activity_at as string | Date).toISOString() : null,
+    });
+  }
+  return result;
 }
 
 export async function isLessonCompleteForUser(
@@ -7500,7 +7589,7 @@ export async function ensureConversationReadTable(): Promise<void> {
   });
 }
 
-/** تعليم محادثة كمقروءة للموظف الحالي */
+/** Store the reader's cursor; platform staff cursors are shared by the unread query. */
 export async function markConversationReadForUser(conversationId: string, userId: string): Promise<void> {
   await ensureConversationReadTable();
   await sql`
@@ -7524,7 +7613,7 @@ export type UnreadMessageNotification = {
   latestAt: Date;
 };
 
-/** عدد وإشعارات رسائل الطلاب غير المقروءة للموظف (أدمن/مساعد/مدرس) */
+/** Admins and assistant admins share unread state; teachers keep their own cursor. */
 export async function getUnreadStudentMessageNotifications(
   userId: string,
   role: UserRole,
@@ -7565,8 +7654,13 @@ export async function getUnreadStudentMessageNotifications(
         FROM platform_conversations pc
         JOIN "User" u ON u.id = pc.student_user_id
         JOIN "Message" m ON m.conversation_id = pc.id AND m.sender_id = pc.student_user_id
-        LEFT JOIN "ConversationRead" r
-          ON r.conversation_id = pc.id AND r.user_id = ${userId}
+        LEFT JOIN (
+          SELECT cr.conversation_id, MAX(cr.last_read_at) AS last_read_at
+          FROM "ConversationRead" cr
+          JOIN "User" reader ON reader.id = cr.user_id
+          WHERE reader.role IN ('ADMIN', 'ASSISTANT_ADMIN')
+          GROUP BY cr.conversation_id
+        ) r ON r.conversation_id = pc.id
         WHERE r.last_read_at IS NULL OR m.created_at > r.last_read_at
         GROUP BY pc.id, pc.student_user_id, u.name
         ORDER BY latest_at DESC

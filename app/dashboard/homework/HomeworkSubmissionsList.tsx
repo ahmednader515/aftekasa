@@ -23,6 +23,8 @@ type Row = {
   lessonTitleAr?: string;
 };
 
+const PAGE_SIZE = 25;
+
 export function HomeworkSubmissionsList({ allowDeleteAll = true }: { allowDeleteAll?: boolean } = {}) {
   const t = useT();
   const router = useRouter();
@@ -31,6 +33,7 @@ export function HomeworkSubmissionsList({ allowDeleteAll = true }: { allowDelete
   const dateLocale = dateLocaleForUi(locale);
   const dash = t("dashboard.studentsPage.dash");
   const [list, setList] = useState<Row[]>([]);
+  const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -40,6 +43,15 @@ export function HomeworkSubmissionsList({ allowDeleteAll = true }: { allowDelete
   const [actionError, setActionError] = useState<string | null>(null);
   const [markingId, setMarkingId] = useState<string | null>(null);
   const [chatLoadingId, setChatLoadingId] = useState<string | null>(null);
+  const totalPages = Math.max(1, Math.ceil(list.length / PAGE_SIZE));
+  const currentPage = Math.min(page, totalPages);
+  const pageStart = (currentPage - 1) * PAGE_SIZE;
+  const visibleRows = list.slice(pageStart, pageStart + PAGE_SIZE);
+
+  function changePage(nextPage: number) {
+    setPage(Math.max(1, Math.min(nextPage, totalPages)));
+    setSelectedIds(new Set());
+  }
 
   function mapRow(r: Record<string, unknown>): Row {
     const markedRaw = r.markedAt ?? r.marked_at;
@@ -61,11 +73,11 @@ export function HomeworkSubmissionsList({ allowDeleteAll = true }: { allowDelete
     };
   }
 
-  function load() {
+  function load(studentName = search, resetPage = false) {
     setLoading(true);
     setLoadError(null);
-    const url = search.trim()
-      ? `/api/homework?studentName=${encodeURIComponent(search.trim())}`
+    const url = studentName.trim()
+      ? `/api/homework?studentName=${encodeURIComponent(studentName.trim())}`
       : "/api/homework";
     fetch(url, { credentials: "include" })
       .then(async (r) => {
@@ -89,6 +101,7 @@ export function HomeworkSubmissionsList({ allowDeleteAll = true }: { allowDelete
         const rows = Array.isArray(data) ? data : [];
         setSelectedIds(new Set());
         setList(rows.map((r: Record<string, unknown>) => mapRow(r)));
+        setPage((previous) => resetPage ? 1 : Math.min(previous, Math.max(1, Math.ceil(rows.length / PAGE_SIZE))));
       })
       .catch((e) => {
         setList([]);
@@ -103,7 +116,7 @@ export function HomeworkSubmissionsList({ allowDeleteAll = true }: { allowDelete
 
   function handleSearch(e: React.FormEvent) {
     e.preventDefault();
-    load();
+    load(search, true);
   }
 
   function toggleSelect(id: string) {
@@ -116,8 +129,8 @@ export function HomeworkSubmissionsList({ allowDeleteAll = true }: { allowDelete
   }
 
   function toggleSelectAll() {
-    if (selectedIds.size === list.length) setSelectedIds(new Set());
-    else setSelectedIds(new Set(list.map((r) => r.id)));
+    if (visibleRows.every((row) => selectedIds.has(row.id))) setSelectedIds(new Set());
+    else setSelectedIds(new Set(visibleRows.map((r) => r.id)));
   }
 
   async function handleDeleteSelected() {
@@ -255,7 +268,7 @@ export function HomeworkSubmissionsList({ allowDeleteAll = true }: { allowDelete
         {search.trim() && (
           <button
             type="button"
-            onClick={() => { setSearch(""); setTimeout(load, 0); }}
+            onClick={() => { setSearch(""); load("", true); }}
             className="rounded-[var(--radius-btn)] border border-[var(--color-border)] px-4 py-2 text-sm font-medium"
           >
             {t(`${L}.showAll`)}
@@ -311,7 +324,7 @@ export function HomeworkSubmissionsList({ allowDeleteAll = true }: { allowDelete
                   <label className="flex cursor-pointer items-center justify-center gap-1">
                     <input
                       type="checkbox"
-                      checked={list.length > 0 && selectedIds.size === list.length}
+                      checked={visibleRows.length > 0 && visibleRows.every((row) => selectedIds.has(row.id))}
                       onChange={toggleSelectAll}
                       className="rounded border-[var(--color-border)]"
                     />
@@ -328,7 +341,7 @@ export function HomeworkSubmissionsList({ allowDeleteAll = true }: { allowDelete
               </tr>
             </thead>
             <tbody>
-              {list.map((row) => (
+              {visibleRows.map((row) => (
                 <tr key={row.id} className="border-b border-[var(--color-border)]">
                   <td className="w-10 p-3">
                     <input
@@ -406,6 +419,37 @@ export function HomeworkSubmissionsList({ allowDeleteAll = true }: { allowDelete
           </table>
         ) : null}
       </div>
+      {list.length > 0 && (
+        <nav aria-label={t(`${L}.paginationLabel`)} dir={dir} className="flex flex-wrap items-center justify-between gap-3">
+          <p aria-live="polite" className="text-sm text-[var(--color-muted)]">
+            {fillMessage(t(`${L}.paginationSummary`), {
+              start: pageStart + 1,
+              end: Math.min(pageStart + PAGE_SIZE, list.length),
+              total: list.length,
+              page: currentPage,
+              pages: totalPages,
+            })}
+          </p>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => changePage(currentPage - 1)}
+              disabled={currentPage === 1 || loading || deleteLoading}
+              className="rounded-[var(--radius-btn)] border border-[var(--color-border)] px-4 py-2 text-sm font-medium disabled:opacity-50"
+            >
+              {t(`${L}.previousPage`)}
+            </button>
+            <button
+              type="button"
+              onClick={() => changePage(currentPage + 1)}
+              disabled={currentPage === totalPages || loading || deleteLoading}
+              className="rounded-[var(--radius-btn)] border border-[var(--color-border)] px-4 py-2 text-sm font-medium disabled:opacity-50"
+            >
+              {t(`${L}.nextPage`)}
+            </button>
+          </div>
+        </nav>
+      )}
     </div>
   );
 }

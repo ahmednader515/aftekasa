@@ -17,6 +17,7 @@ type CourseRow = {
   imageUrl: string | null;
   lessonsCount: number;
   enrollmentsCount: number;
+  subscriptionStudentsCount: number;
   category: { id: string; name: string; nameAr?: string | null } | null;
   teacher?: { id: string; name: string | null; email: string | null } | null;
 };
@@ -62,6 +63,7 @@ function CourseTableRow({
       )}
       <td className="p-3 text-[var(--color-muted)]">{c.lessonsCount}</td>
       <td className="p-3 text-[var(--color-muted)]">{c.enrollmentsCount}</td>
+      <td className="p-3 text-[var(--color-muted)]">{c.subscriptionStudentsCount}</td>
       <td className="p-3">
         {c.price.toFixed(2)} {egp}
       </td>
@@ -266,6 +268,7 @@ export function CoursesManageList({
                     {showTeacherColumn && <th className={thClass}>{t(`${L}.colTeacher`, "Teacher")}</th>}
                     <th className={thClass}>{t(`${L}.colLessons`)}</th>
                     <th className={thClass}>{t(`${L}.colStudents`)}</th>
+                    <th className={thClass} title={t(`${L}.subscriptionStudentsHelp`)}>{t(`${L}.colSubscriptionStudents`)}</th>
                     <th className={thClass}>{t(`${L}.colPrice`)}</th>
                     <th className={thClass}>{t(`${L}.colStatus`)}</th>
                     <th className={thClass}>{t(`${L}.colActions`)}</th>

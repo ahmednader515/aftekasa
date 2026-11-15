@@ -2,7 +2,7 @@ import { getServerSession } from "next-auth";
 import { redirect } from "next/navigation";
 import Link from "next/link";
 import { authOptions } from "@/lib/auth";
-import { getCoursesWithCounts, getCoursesWithCountsForCreator } from "@/lib/db";
+import { getCoursesWithCounts, getCoursesWithCountsForCreator, getSubscriptionStudentCountsForCourses } from "@/lib/db";
 import { resolveCourseIsPublished } from "@/lib/legacy-schema";
 import { getServerTranslator } from "@/lib/i18n/server";
 import { CoursesManageList } from "./CoursesManageList";
@@ -20,6 +20,7 @@ export default async function DashboardCoursesPage() {
     role === "TEACHER"
       ? await getCoursesWithCountsForCreator(session.user.id)
       : await getCoursesWithCounts();
+  const subscriptionStudentCounts = await getSubscriptionStudentCountsForCourses(courses);
 
   const coursesPlain = courses.map((c) => {
     const row = c as Record<string, unknown>;
@@ -37,6 +38,7 @@ export default async function DashboardCoursesPage() {
       imageUrl,
       lessonsCount: Number(row.lessonsCount ?? 0),
       enrollmentsCount: Number(row.enrollmentsCount ?? 0),
+      subscriptionStudentsCount: subscriptionStudentCounts.get(String(row.id)) ?? 0,
       category: cat
         ? { id: cat.id, name: cat.name, nameAr: cat.nameAr ?? null }
         : null,
